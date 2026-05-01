@@ -2,6 +2,8 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { appConfig } from '../config.js';
 import { generateSpanishSummary } from './ollamaClient.js';
+import { postprocessTranscription } from './transcriptionPostprocessor.js';
+import { transcribeAudio, validateWhisperCpp } from './whisperCpp.js';
 import { appendLine, ensureDir, listJobFiles, pathExists, readText, writeJson, writeText } from '../utils/files.js';
 import { checkCommandAvailable, runCommand } from '../utils/shell.js';
 import type { JobRecord, JobStatus } from '../types.js';
@@ -13,7 +15,7 @@ interface ProcessJobHooks {
   failJob: (message: string) => Promise<void>;
 }
 
-const REQUIRED_COMMANDS = ['yt-dlp', 'ffmpeg', 'whisper-ctranslate2'] as const;
+const REQUIRED_COMMANDS = ['yt-dlp', 'ffmpeg'] as const;
 
 export async function validateDependencies(): Promise<void> {
   const results = await Promise.all(
@@ -26,9 +28,11 @@ export async function validateDependencies(): Promise<void> {
   const missing = results.filter((item) => !item.exists).map((item) => item.command);
   if (missing.length > 0) {
     throw new Error(
-      `Faltan herramientas del sistema: ${missing.join(', ')}. Instalá yt-dlp y ffmpeg con Homebrew, y whisper con pip antes de procesar videos.`,
+      `Faltan herramientas del sistema: ${missing.join(', ')}. Instalá yt-dlp y ffmpeg con Homebrew antes de procesar videos.`,
     );
   }
+
+  await validateWhisperCpp();
 }
 
 export async function processVideoJob(job: JobRecord, hooks: ProcessJobHooks): Promise<void> {
@@ -51,7 +55,7 @@ export async function processVideoJob(job: JobRecord, hooks: ProcessJobHooks): P
     await persistJobFile();
 
     const audioPath = await downloadAudio(job, log, hooks);
-    const transcriptionPath = await transcribeAudio(job, audioPath, log, hooks);
+    const transcriptionPath = await runTranscription(job, audioPath, log, hooks);
 
     if (!job.generateTranscription) {
       await log('La opción de transcripción original fue desactivada. Se mantiene el archivo porque traducción/resumen dependen de la transcripción en este MVP.');
@@ -133,58 +137,146 @@ async function downloadAudio(
   return audioPath;
 }
 
-async function transcribeAudio(
+async function denoiseAudio(
+  job: JobRecord,
+  audioPath: string,
+  log: (message: string) => Promise<void>,
+): Promise<string> {
+  const denoisedAudioPath = path.join(job.outputDir, 'audio_denoised.wav');
+
+  await log(`Aplicando denoise previo con ffmpeg usando filtro: ${appConfig.whisperDenoiseFilter}`);
+
+  await runCommand({
+    command: 'ffmpeg',
+    args: [
+      '-y',
+      '-i',
+      audioPath,
+      '-vn',
+      '-ac',
+      '1',
+      '-ar',
+      '16000',
+      '-af',
+      appConfig.whisperDenoiseFilter,
+      denoisedAudioPath,
+    ],
+    onStdout: async (chunk) => {
+      const lines = chunk.split(/\r?\n/).filter(Boolean);
+      for (const line of lines) {
+        await log(`[ffmpeg] ${line}`);
+      }
+    },
+    onStderr: async (chunk) => {
+      const lines = chunk.split(/\r?\n/).filter(Boolean);
+      for (const line of lines) {
+        await log(`[ffmpeg] ${line}`);
+      }
+    },
+  });
+
+  if (!(await pathExists(denoisedAudioPath))) {
+    throw new Error('ffmpeg terminó, pero no generó audio_denoised.wav.');
+  }
+
+  await log(`Audio normalizado y con denoise disponible en ${denoisedAudioPath}`);
+  return denoisedAudioPath;
+}
+
+async function segmentAudioForTranscription(
+  job: JobRecord,
+  denoisedAudioPath: string,
+  log: (message: string) => Promise<void>,
+): Promise<string[]> {
+  const segmentDir = path.join(job.outputDir, 'transcription_chunks');
+  const segmentPattern = path.join(segmentDir, 'chunk_%03d.wav');
+
+  await ensureDir(segmentDir);
+  await log(
+    `Segmentando audio para transcripción en bloques de ${appConfig.whisperChunkDurationSeconds} segundos.`,
+  );
+
+  await runCommand({
+    command: 'ffmpeg',
+    args: [
+      '-y',
+      '-i',
+      denoisedAudioPath,
+      '-f',
+      'segment',
+      '-segment_time',
+      String(appConfig.whisperChunkDurationSeconds),
+      '-c',
+      'copy',
+      segmentPattern,
+    ],
+    onStdout: async (chunk) => {
+      const lines = chunk.split(/\r?\n/).filter(Boolean);
+      for (const line of lines) {
+        await log(`[ffmpeg:segment] ${line}`);
+      }
+    },
+    onStderr: async (chunk) => {
+      const lines = chunk.split(/\r?\n/).filter(Boolean);
+      for (const line of lines) {
+        await log(`[ffmpeg:segment] ${line}`);
+      }
+    },
+  });
+
+  const segments = (await fs.readdir(segmentDir))
+    .filter((file) => file.endsWith('.wav'))
+    .sort((a, b) => a.localeCompare(b))
+    .map((file) => path.join(segmentDir, file));
+
+  if (segments.length === 0) {
+    throw new Error('ffmpeg segmentó el audio, pero no generó chunks para transcripción.');
+  }
+
+  await log(`Audio segmentado en ${segments.length} chunks.`);
+  return segments;
+}
+
+async function runTranscription(
   job: JobRecord,
   audioPath: string,
   log: (message: string) => Promise<void>,
   hooks: Pick<ProcessJobHooks, 'updateStatus' | 'refreshFiles'>,
 ): Promise<string> {
   await hooks.updateStatus('transcribing');
-  await log(`Transcribiendo audio con whisper-ctranslate2 (${job.language}) usando modelo ${appConfig.whisperModel}.`);
+  const denoisedAudioPath = await denoiseAudio(job, audioPath, log);
+  const audioSegments = await segmentAudioForTranscription(job, denoisedAudioPath, log);
+  const languageLabel =
+    job.language.trim().toLowerCase() === 'auto' || job.language.trim() === ''
+      ? 'detección automática de idioma'
+      : `idioma forzado: ${job.language.trim()}`;
+  await log(`Transcribiendo audio con whisper.cpp (${languageLabel}) usando modelo ${path.basename(appConfig.whisperCppModelPath)}.`);
 
-  const args = [
-    audioPath,
-    '--model',
-    appConfig.whisperModel,
-    '--task',
-    'transcribe',
-    '--output_format',
-    'txt',
-    '--output_dir',
-    job.outputDir,
-  ];
-
-  if (job.language !== 'auto') {
-    args.push('--language', job.language);
-  }
-
-  await runCommand({
-    command: 'whisper-ctranslate2',
-    args,
-    onStdout: async (chunk) => {
-      const lines = chunk.split(/\r?\n/).filter(Boolean);
-      for (const line of lines) {
-        await log(`[whisper-ctranslate2] ${line}`);
-      }
-    },
-    onStderr: async (chunk) => {
-      const lines = chunk.split(/\r?\n/).filter(Boolean);
-      for (const line of lines) {
-        await log(`[whisper-ctranslate2:stderr] ${line}`);
-      }
-    },
-  });
-
-  const rawWhisperOutput = path.join(job.outputDir, 'audio.txt');
   const transcriptionPath = path.join(job.outputDir, 'transcription.txt');
+  const mergedChunks: string[] = [];
 
-  if (!(await pathExists(rawWhisperOutput))) {
-    throw new Error('Whisper terminó, pero no generó audio.txt.');
+  for (let index = 0; index < audioSegments.length; index += 1) {
+    const segmentPath = audioSegments[index];
+    const outputBase = path.join(job.outputDir, `transcription_chunk_${String(index + 1).padStart(3, '0')}`);
+    await log(`Transcribiendo chunk ${index + 1}/${audioSegments.length}: ${path.basename(segmentPath)}`);
+
+    const chunkTranscriptionPath = await transcribeAudio({
+      audioPath: segmentPath,
+      outputBase,
+      language: job.language,
+      onLog: log,
+    });
+
+    const chunkContent = (await readText(chunkTranscriptionPath)).trim();
+    if (chunkContent) {
+      mergedChunks.push(chunkContent);
+    }
   }
 
-  if (rawWhisperOutput !== transcriptionPath) {
-    await fs.rename(rawWhisperOutput, transcriptionPath);
-  }
+  await log('Aplicando postproceso de transcripción para deduplicar repeticiones consecutivas.');
+  const mergedTranscription = `${mergedChunks.join('\n\n').trim()}\n`;
+  const cleanedTranscription = postprocessTranscription(mergedTranscription);
+  await writeText(transcriptionPath, cleanedTranscription);
 
   await hooks.refreshFiles();
   await log(`Transcripción guardada en ${transcriptionPath}`);

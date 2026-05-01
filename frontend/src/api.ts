@@ -7,7 +7,7 @@ export type JobStatus =
   | 'completed'
   | 'failed';
 
-export type JobLanguage = 'auto' | 'English' | 'Spanish';
+export type JobLanguage = string;
 
 export interface CreateJobPayload {
   url: string;

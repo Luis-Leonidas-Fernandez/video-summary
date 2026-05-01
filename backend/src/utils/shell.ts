@@ -1,4 +1,6 @@
 import { spawn } from 'node:child_process';
+import { constants as fsConstants } from 'node:fs';
+import { access } from 'node:fs/promises';
 
 export interface RunCommandOptions {
   command: string;
@@ -9,6 +11,15 @@ export interface RunCommandOptions {
 }
 
 export async function checkCommandAvailable(command: string): Promise<boolean> {
+  if (command.includes('/')) {
+    try {
+      await access(command, fsConstants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   return new Promise((resolve) => {
     const child = spawn('which', [command]);
     child.on('close', (code) => resolve(code === 0));

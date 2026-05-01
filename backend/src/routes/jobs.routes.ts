@@ -15,7 +15,7 @@ jobsRouter.post('/', async (req, res) => {
   }
 
   if (!body.language || !isValidLanguage(body.language)) {
-    res.status(400).json({ error: 'language debe ser auto, English o Spanish.' });
+    res.status(400).json({ error: 'language debe ser un texto no vacío. Ejemplos válidos: auto, en, es, English, Spanish.' });
     return;
   }
 

@@ -1,6 +1,6 @@
 # Video Study Tool
 
-App local para Mac que recibe una URL de YouTube, descarga el audio, transcribe localmente con `whisper-ctranslate2` y genera un resumen local con Ollama, guardando todos los artefactos en archivos dentro de `/output`.
+App local para Mac que recibe una URL de YouTube, descarga el audio, transcribe localmente con `whisper.cpp`, permite forzar idioma manual, aplica denoise previo con `ffmpeg` y genera un resumen local con Ollama, guardando todos los artefactos en archivos dentro de `/output`.
 
 ## Stack
 
@@ -10,7 +10,7 @@ App local para Mac que recibe una URL de YouTube, descarga el audio, transcribe 
 - Herramientas del sistema:
   - `yt-dlp`
   - `ffmpeg`
-  - `whisper-ctranslate2`
+  - `whisper.cpp` (`whisper-cli`)
   - `ollama`
 
 ## Estructura
@@ -53,10 +53,15 @@ video-summary/
 
 ```bash
 brew install yt-dlp ffmpeg ollama
-pip install -U faster-whisper whisper-ctranslate2
+brew install whisper-cpp
+bash /Users/luis/whisper.cpp/models/download-ggml-model.sh large-v3
+cd /Users/luis/whisper.cpp
+cmake -B build-nocoreml -DWHISPER_COREML=OFF
+cmake --build build-nocoreml -j 8 --config Release
 ```
 
 > El backend valida estas dependencias antes de procesar cada trabajo. Si falta alguna, el job falla con un mensaje claro.
+> En este proyecto conviene usar un build sin CoreML para `large-v3`, porque así evitás depender del encoder `.mlmodelc`. Si instalaste `whisper.cpp` en otra ruta, ajustá `WHISPER_CPP_BINARY` y `WHISPER_CPP_MODEL_PATH` en `backend/.env`.
 
 ### 2) Configuración de Ollama
 
@@ -68,11 +73,17 @@ Variables en `backend/.env`:
 
 ```env
 PORT=3001
-WHISPER_MODEL=large-v3-turbo
+WHISPER_CPP_BINARY=/Users/luis/whisper.cpp/build-nocoreml/bin/whisper-cli
+WHISPER_CPP_MODEL_PATH=/Users/luis/whisper.cpp/models/ggml-large-v3.bin
+WHISPER_CPP_THREADS=10
+WHISPER_CHUNK_DURATION_SECONDS=90
+WHISPER_CPP_GLOSSARY=Japan, Yusuke, Taro, Kenji, karoshi, futoko, ijime, juku, shukatsu, naitei, ronin, konbini, pachinko, onigiri, Aokigahara
+WHISPER_DENOISE_FILTER=afftdn=nr=20:nf=-20:tn=1,highpass=f=120,lowpass=f=7000
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=gemma3:12b
 OLLAMA_TIMEOUT_MS=300000
-OLLAMA_NUM_PREDICT=500
+OLLAMA_NUM_PREDICT=1500
+OLLAMA_NUM_CTX=8192
 ```
 
 Si querés levantar Ollama manualmente:
@@ -135,17 +146,20 @@ npm run dev:frontend
 1. Pegás una URL válida de YouTube.
 2. El backend crea un job en memoria y una carpeta local dentro de `output/job_<timestamp>`.
 3. `yt-dlp` descarga y extrae el audio a `audio.mp3`.
-4. `whisper-ctranslate2` genera `transcription.txt`.
-5. Antes de resumir, la transcripción pasa por un preprocesador que:
+4. `ffmpeg` genera `audio_denoised.wav` con reducción de ruido, mono y 16 kHz.
+5. `ffmpeg` segmenta `audio_denoised.wav` en chunks más chicos para evitar loops de transcripción en audios largos.
+6. `whisper.cpp` transcribe chunk por chunk, usando el idioma manual si lo cargás y un prompt con glosario de nombres/términos delicados.
+7. El backend concatena esos chunks, aplica un postproceso para deduplicar repeticiones consecutivas y arma `transcription.txt`.
+8. Antes de resumir, la transcripción pasa por un preprocesador que:
    - segmenta en secciones
    - detecta transiciones
    - resalta términos técnicos frecuentes
    - entrega una versión estructurada al modelo de resumen
-6. Si activás traducción, se crea `translation_es.txt` como placeholder.
-7. Si activás resumen, Ollama genera `summary_es.txt` usando el modelo configurado en `.env`.
+9. Si activás traducción, se crea `translation_es.txt` como placeholder.
+10. Si activás resumen, Ollama genera `summary_es.txt` usando el modelo configurado en `.env`.
    - El prompt está orientado a cobertura alta, fidelidad al texto y preservación de términos técnicos.
    - El backend intenta sanear la salida, continuar respuestas cortadas y reparar formatos defectuosos antes de fallar.
-8. Todos los logs del proceso se escriben también en `logs.txt`.
+11. Todos los logs del proceso se escriben también en `logs.txt`.
 
 ## Endpoints
 
@@ -164,6 +178,7 @@ Body:
 ```
 
 > `generateTranscription` sigue existiendo en la API, aunque el procesamiento base necesita transcribir para habilitar traducción y resumen.
+> En `language` podés mandar `auto`, códigos ISO simples (`en`, `es`, `ja`) o nombres comunes como `English`, `Español`, `Japanese`.
 
 ### `GET /api/jobs/:id`
 
@@ -207,7 +222,7 @@ output/
 - **Sin base de datos**: toda la metadata vive en memoria mientras el proceso Node está levantado y además se persiste un snapshot en `job.json`.
 - **Cola simple en memoria**: procesa un job por vez para evitar mezclar stdout/stderr y simplificar el flujo local.
 - **`spawn` en vez de `execFile`**: permite leer logs en tiempo real desde `stdout` y `stderr`.
-- **Transcripción acelerada**: se usa `whisper-ctranslate2` en vez del `whisper` Python CLI original.
+- **Transcripción local optimizada para Mac**: se usa `whisper.cpp` con `whisper-cli`, modelo `large-v3`, prompt con glosario y denoise previo en `ffmpeg`.
 - **Preprocesamiento antes del resumen**: la transcripción se estructura por secciones y términos para mejorar cobertura del resumen.
 - **Resumen local con Ollama**: el backend usa `OLLAMA_BASE_URL` y `OLLAMA_MODEL` desde `.env`.
 - **Traducción placeholder**: `translateToSpanish()` sigue siendo un placeholder hasta que decidas integrarla también con Ollama.

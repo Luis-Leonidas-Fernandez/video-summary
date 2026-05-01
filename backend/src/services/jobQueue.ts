@@ -113,5 +113,5 @@ export function isValidUrl(value: string): boolean {
 }
 
 export function isValidLanguage(value: string): value is CreateJobInput['language'] {
-  return value === 'auto' || value === 'English' || value === 'Spanish';
+  return typeof value === 'string' && value.trim().length > 0;
 }

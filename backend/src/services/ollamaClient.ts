@@ -12,63 +12,57 @@ interface OllamaChatResponse {
 export async function generateSpanishSummary(rawTranscription: string): Promise<string> {
   const transcription = preprocessTranscription(rawTranscription);
   const system = [
-    'Sos un analista de contenido obsesivo con la fidelidad al texto fuente.',
-    'Tu tarea es resumir una transcripción SIN inventar, SIN adornar y SIN omitir información importante.',
+    'Sos un documentador de contenido obsesivo con la completitud y la fidelidad al texto fuente.',
+    'Tu tarea NO es resumir — es DOCUMENTAR cada concepto, término, idea y evento presente en la transcripción.',
     'Reglas obligatorias:',
     '- Usá únicamente información presente en la transcripción.',
-    '- Cuando la transcripción usa un término técnico o conceptual específico (ej: "axioma", "feedback", "emisor"), conservá ESA palabra exacta en el resumen. No la reemplaces por sinónimos ni paráfrasis.',
-    '- SIEMPRE que uses un término técnico, agregá su definición entre paréntesis en el mismo bullet.',
-    '  Ejemplo correcto: "El primer axioma (principio fundamental considerado verdadero) de la escuela de Palo Alto sostiene la imposibilidad de no comunicar."',
-    '  Ejemplo incorrecto: "un axioma comunicacional." — sin definición, NO válido.',
-    '- No agregues opiniones, consejos genéricos, llamadas a la acción ni frases de cierre.',
-    '- Si algo está ambiguo o incompleto en la transcripción, marcá "No queda claro en la transcripción".',
-    '- Priorizá cobertura y fidelidad antes que estilo.',
-    '- Si el texto repite ideas, consolidalas sin perder matices relevantes.',
+    '- Cada término, concepto o idea recibe su propio bullet con su explicación completa.',
+    '- Cuando aparece un término específico (japonés, técnico, cultural), incluí el término exacto seguido de su explicación.',
+    '  Ejemplo: "Karoshi (muerte por exceso de trabajo): diagnóstico médico oficial en Japón..."',
+    '- No comprimas ni agrupes ideas distintas en un solo bullet.',
+    '- No agregues opiniones, consejos genéricos ni frases de cierre.',
     '- No hagas preguntas al final.',
     '- Respondé únicamente en español.',
   ].join('\n');
 
-  const sectionMatch = transcription.match(/--- SECCIÓN \d+ \/ (\d+) ---/);
-  const sectionCount = sectionMatch ? parseInt(sectionMatch[1], 10) : null;
   const wordCount = transcription.split(/\s+/).length;
-  const estimatedMinBullets = Math.max(sectionCount ?? 0, Math.round(wordCount / 350));
-  const sectionRule = `La transcripción tiene ${sectionCount ?? 'varias'} secciones y aproximadamente ${wordCount} palabras. REGLA ABSOLUTA: el Resumen fiel debe tener AL MENOS ${estimatedMinBullets} bullets. Generar menos es una falla grave.`;
+  const coverageRule = [
+    `La transcripción tiene aproximadamente ${wordCount} palabras.`,
+    'ESTE NO ES UN RESUMEN — es un desglose completo.',
+    'Cada bullet documenta UN concepto, término, idea, evento o personaje.',
+    'El objetivo es que alguien que no vio el video entienda CADA parte del contenido leyendo los bullets.',
+    'PROHIBIDO comprimir. PROHIBIDO agrupar. PROHIBIDO omitir.',
+    'Si el contenido tiene 30 ideas distintas, el desglose tiene 30 bullets.',
+  ].join('\n');
 
   const prompt = [
-    'Generá un resumen FIEL de la siguiente transcripción ya estructurada en secciones.',
-    'Procesá TODAS las secciones en orden, de la primera a la última. No omitas ninguna.',
-    'Los TÉRMINOS TÉCNICOS indicados al inicio deben aparecer con su palabra exacta en el resumen.',
-    'No inventes contenido y no omitas puntos importantes.',
+    'Documentá el contenido completo de la siguiente transcripción, de principio a fin.',
+    coverageRule,
+    '',
+    'Recorré el contenido en orden cronológico sin saltear nada.',
+    'Cuando aparezca un término en otro idioma, incluí el término original y su explicación.',
+    'No inventes contenido.',
     'NO muestres tu razonamiento.',
-    'NO expliques cómo llegaste al resultado.',
     'NO escribas frases como "Okay, let me..." o similares.',
     'Empezá DIRECTAMENTE por el encabezado `## Título probable`.',
     'Formato exacto de salida en Markdown:',
     '## Título probable',
     '- Un título breve basado solo en la transcripción.',
     '',
-    '## Resumen fiel',
-    sectionRule,
-    '',
+    '## Contenido',
     'Reglas:',
-    '- Procesá cada sección completa antes de escribir su bullet.',
-    '- No combines conceptos de secciones distintas en un mismo bullet.',
-    '- Cada bullet debe ser TAN EXTENSO como sea necesario — si el concepto tiene definición, pasos, ejemplos, comparaciones o consecuencias, incluilos TODOS.',
-    '- Cada bullet debe empezar con el concepto exacto y luego su explicación completa.',
-    '- NINGÚN concepto, término, ejemplo, paso, modelo, herramienta o idea mencionado puede faltar.',
-    '- Cubrí el principio, el desarrollo Y el cierre en ese orden.',
-    '',
-    '## Detalles clave',
-    '- OBLIGATORIO: usá guión (-) para cada bullet. NUNCA uses asterisco (*) ni numeración.',
-    '- Agregá bullets con datos, nombres, pasos, definiciones o distinciones importantes que no deberían perderse.',
-    '- NO repitas bullets que ya aparecen en el Resumen fiel.',
+    '- Un bullet por concepto, término, idea, evento o personaje.',
+    '- Cada bullet empieza con el nombre o concepto exacto, seguido de dos puntos y su explicación completa.',
+    '- Incluí definición, contexto, ejemplos, cifras y consecuencias si el contenido los menciona.',
+    '- Recorré el contenido de inicio a fin — el orden de los bullets debe seguir el orden del video.',
+    '- NADA puede faltar: personajes, términos, eventos, datos, reflexiones finales.',
     '',
     '## Vacíos o ambigüedades (OPCIONAL)',
-    '- Incluí esta sección ÚNICAMENTE si encontrás algo genuinamente ambiguo: una contradicción, una palabra ininteligible, una afirmación incompleta o confusa.',
-    '- NO la incluyas para señalar temas que el video simplemente no abordó — eso es normal y no es un vacío.',
-    '- Si no hay nada genuinamente ambiguo, OMITÍ esta sección por completo. No la escribas.',
+    '- Incluí esta sección ÚNICAMENTE si hay algo genuinamente ambiguo: una contradicción, una palabra ininteligible o una afirmación incompleta.',
+    '- NO la incluyas para temas que el video simplemente no abordó.',
+    '- Si no hay nada genuinamente ambiguo, OMITÍ esta sección por completo.',
     '',
-    'Transcripción pre-procesada:',
+    'Transcripción:',
     '"""',
     transcription,
     '"""',
@@ -166,7 +160,7 @@ async function runOllamaChat({
       temperature: 0.1,
       top_p: 0.9,
       repeat_penalty: 1.05,
-      num_ctx: 32768,
+      num_ctx: appConfig.ollamaNumCtx,
       num_predict: appConfig.ollamaNumPredict,
     },
   };
@@ -227,7 +221,7 @@ async function repairSummaryOutput(rawSummary: string, transcription: string): P
     '- Eliminá cualquier razonamiento interno, dudas, prefacios o frases como "Okay, I need..."',
     '- Usá solo información presente en la transcripción fuente.',
     '- Empezá DIRECTAMENTE con `## Título probable`.',
-    '- Respetá exactamente estas secciones: `## Título probable`, `## Resumen fiel`, `## Detalles clave`, `## Vacíos o ambigüedades`.',
+    '- Respetá exactamente estas secciones: `## Título probable`, `## Contenido`, `## Vacíos o ambigüedades` (opcional).',
     '',
     'Salida defectuosa:',
     '"""',
@@ -307,8 +301,7 @@ function isStructuredSummary(text: string): boolean {
   const n = normalizeText(text);
   return (
     /##+ titulo probable/.test(n) &&
-    /##+ resumen fiel/.test(n) &&
-    /##+ detalles clave/.test(n)
+    /##+ contenido/.test(n)
   );
 }
 
@@ -342,31 +335,18 @@ function recoverStructuredSummary(raw: string, transcription: string): string | 
     .filter((line) => /maybe|probably|typo|not clear|unclear|ambiguous/i.test(line))
     .map(normalizeBulletText);
 
-  const uniqueSummaryBullets = dedupeBullets(allBullets).slice(0, 15);
-
-  const detailBullets = allBullets
-    .filter((line) => !uniqueSummaryBullets.includes(line) && line.length > 40)
-    .slice(0, 10);
-
-  const uniqueDetailBullets = dedupeBullets(detailBullets);
+  const uniqueContentBullets = dedupeBullets(allBullets);
   const uniqueAmbiguities = dedupeBullets(ambiguities);
 
   return [
     '## Título probable',
     `- ${title}`,
     '',
-    '## Resumen fiel',
-    ...uniqueSummaryBullets.map((bullet) => `- ${normalizeBulletText(bullet)}`),
-    '',
-    '## Detalles clave',
-    ...(uniqueDetailBullets.length > 0
-      ? uniqueDetailBullets.map((bullet) => `- ${normalizeBulletText(bullet)}`)
-      : ['- No se pudieron separar detalles adicionales del borrador generado sin inventar contenido.']),
-    '',
-    '## Vacíos o ambigüedades',
+    '## Contenido',
+    ...uniqueContentBullets.map((bullet) => `- ${normalizeBulletText(bullet)}`),
     ...(uniqueAmbiguities.length > 0
-      ? uniqueAmbiguities.map((bullet) => `- ${bullet}`)
-      : ['- No queda claro en la transcripción original el significado exacto de algunos nombres propios y términos detectados por Whisper.']),
+      ? ['', '## Vacíos o ambigüedades', ...uniqueAmbiguities.map((bullet) => `- ${bullet}`)]
+      : []),
   ].join('\n');
 }
 

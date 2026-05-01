@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import type { CreateJobPayload, JobLanguage } from '../api';
+import type { CreateJobPayload } from '../api';
 
 interface JobFormProps {
   isSubmitting: boolean;
@@ -38,17 +38,29 @@ export function JobForm({ isSubmitting, onSubmit }: JobFormProps) {
       </label>
 
       <label>
-        Idioma esperado
-        <select
+        Idioma para transcripción
+        <input
+          type="text"
+          list="language-options"
           value={form.language}
           onChange={(event) =>
-            setForm((current) => ({ ...current, language: event.target.value as JobLanguage }))
+            setForm((current) => ({ ...current, language: event.target.value }))
           }
-        >
-          <option value="auto">auto</option>
-          <option value="English">English</option>
-          <option value="Spanish">Spanish</option>
-        </select>
+          placeholder="auto, en, es, English, Spanish..."
+          required
+        />
+        <small>
+          Poné <code>auto</code> para detección automática o forzá un idioma como <code>en</code>, <code>es</code>, <code>ja</code>, <code>English</code> o <code>Español</code>.
+        </small>
+        <datalist id="language-options">
+          <option value="auto" />
+          <option value="en" />
+          <option value="es" />
+          <option value="ja" />
+          <option value="English" />
+          <option value="Spanish" />
+          <option value="Japanese" />
+        </datalist>
       </label>
 
       <fieldset>
