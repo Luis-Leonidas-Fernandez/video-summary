@@ -40,3 +40,30 @@ export interface JobRecord {
   logs: string[];
   error?: string;
 }
+
+export interface JobResponse {
+  id: string;
+  createdAt: string;
+  updatedAt: string;
+  status: JobStatus;
+  url: string;
+  language: JobLanguage;
+  generateTranscription: boolean;
+  generateTranslation: boolean;
+  generateSummary: boolean;
+  outputDir: string;
+  files: JobFileEntry[];
+  logs: string[];
+  logCount: number;
+  logsTruncated: boolean;
+  error?: string;
+  progress?: number;
+}
+
+export interface JobLogsResponse {
+  jobId: string;
+  logs: string[];
+  logCount: number;
+  tail: number;
+  logsTruncated: boolean;
+}

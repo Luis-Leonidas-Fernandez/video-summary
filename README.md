@@ -1,6 +1,6 @@
 # Video Study Tool
 
-App local para Mac que recibe una URL de YouTube, descarga el audio, transcribe localmente con `whisper.cpp`, permite forzar idioma manual, aplica denoise previo con `ffmpeg` y genera un resumen local con Ollama, guardando todos los artefactos en archivos dentro de `/output`.
+App local para Mac que recibe una URL de YouTube, descarga el audio, transcribe localmente con `whisper.cpp`, permite forzar idioma manual, aplica denoise previo con `ffmpeg` y genera material de estudio exhaustivo con Ollama, guardando todos los artefactos en archivos dentro de `/output`.
 
 ## Stack
 
@@ -24,8 +24,11 @@ video-summary/
       services/
         jobQueue.ts
         ollamaClient.ts
+        studyArtifacts.ts
+        studyExtraction.ts
         transcriptionPreprocessor.ts
         videoProcessor.ts
+        videoPartitioner.ts
       utils/
         shell.ts
         files.ts
@@ -76,6 +79,7 @@ PORT=3001
 WHISPER_CPP_BINARY=/Users/luis/whisper.cpp/build-nocoreml/bin/whisper-cli
 WHISPER_CPP_MODEL_PATH=/Users/luis/whisper.cpp/models/ggml-large-v3.bin
 WHISPER_CPP_THREADS=10
+VIDEO_PART_DURATION_SECONDS=1800
 WHISPER_CHUNK_DURATION_SECONDS=90
 WHISPER_CPP_GLOSSARY=Japan, Yusuke, Taro, Kenji, karoshi, futoko, ijime, juku, shukatsu, naitei, ronin, konbini, pachinko, onigiri, Aokigahara
 WHISPER_DENOISE_FILTER=afftdn=nr=20:nf=-20:tn=1,highpass=f=120,lowpass=f=7000
@@ -131,7 +135,7 @@ Ese comando:
 Backend disponible en: [http://localhost:3001](http://localhost:3001)
 Frontend disponible en: [http://localhost:5173](http://localhost:5173)
 
-En el frontend también se visualiza el contenido de `summary_es.txt` con una presentación estructurada, además de dejar el archivo disponible para abrir o descargar.
+En el frontend también se visualiza el contenido de `full_study_notes_es.txt` con una presentación estructurada, además de dejar el archivo disponible para abrir o descargar.
 
 ### Comandos individuales
 
@@ -147,19 +151,15 @@ npm run dev:frontend
 2. El backend crea un job en memoria y una carpeta local dentro de `output/job_<timestamp>`.
 3. `yt-dlp` descarga y extrae el audio a `audio.mp3`.
 4. `ffmpeg` genera `audio_denoised.wav` con reducción de ruido, mono y 16 kHz.
-5. `ffmpeg` segmenta `audio_denoised.wav` en chunks más chicos para evitar loops de transcripción en audios largos.
-6. `whisper.cpp` transcribe chunk por chunk, usando el idioma manual si lo cargás y un prompt con glosario de nombres/términos delicados.
-7. El backend concatena esos chunks, aplica un postproceso para deduplicar repeticiones consecutivas y arma `transcription.txt`.
-8. Antes de resumir, la transcripción pasa por un preprocesador que:
-   - segmenta en secciones
-   - detecta transiciones
-   - resalta términos técnicos frecuentes
-   - entrega una versión estructurada al modelo de resumen
+5. `ffmpeg` divide `audio_denoised.wav` en partes de 30 minutos dentro de `video_parts/`.
+6. Cada parte se vuelve a segmentar en subchunks más chicos para Whisper.
+7. `whisper.cpp` transcribe subchunk por subchunk, usando el idioma manual si lo cargás y un prompt con glosario.
+8. El backend fusiona los subchunks en `transcription_part_XXX.txt` y luego consolida todas las partes en `transcription.txt`.
 9. Si activás traducción, se crea `translation_es.txt` como placeholder.
-10. Si activás resumen, Ollama genera `summary_es.txt` usando el modelo configurado en `.env`.
-   - El prompt está orientado a cobertura alta, fidelidad al texto y preservación de términos técnicos.
-   - El backend intenta sanear la salida, continuar respuestas cortadas y reparar formatos defectuosos antes de fallar.
-11. Todos los logs del proceso se escriben también en `logs.txt`.
+10. Si activás resumen, Ollama genera una extracción exhaustiva explicativa por parte (`extraction_part_XXX.txt`) y luego consolida todo en `full_study_notes_es.txt`.
+11. Cada extracción parcial se valida para detectar deriva, listas artificiales y reparaciones; el resultado queda en `validation_report.json`.
+12. También se generan artefactos de estudio derivados: `outline_es.txt`, `key_concepts_es.txt`, `questions_es.txt` y `glossary_es.txt`.
+13. Todos los logs del proceso se escriben también en `logs.txt`.
 
 ## Endpoints
 
@@ -211,9 +211,17 @@ output/
   job_1714200000000/
     job.json
     audio.mp3
+    transcription_part_001.txt
+    extraction_part_001.txt
     transcription.txt
+    full_study_notes_es.txt
     translation_es.txt
     summary_es.txt
+    validation_report.json
+    outline_es.txt
+    key_concepts_es.txt
+    questions_es.txt
+    glossary_es.txt
     logs.txt
 ```
 
@@ -223,19 +231,23 @@ output/
 - **Cola simple en memoria**: procesa un job por vez para evitar mezclar stdout/stderr y simplificar el flujo local.
 - **`spawn` en vez de `execFile`**: permite leer logs en tiempo real desde `stdout` y `stderr`.
 - **Transcripción local optimizada para Mac**: se usa `whisper.cpp` con `whisper-cli`, modelo `large-v3`, prompt con glosario y denoise previo en `ffmpeg`.
-- **Preprocesamiento antes del resumen**: la transcripción se estructura por secciones y términos para mejorar cobertura del resumen.
-- **Resumen local con Ollama**: el backend usa `OLLAMA_BASE_URL` y `OLLAMA_MODEL` desde `.env`.
+- **Procesamiento jerárquico**: primero parte el video en bloques de 30 minutos y recién después transcribe cada parte en subchunks más chicos.
+- **Extracción exhaustiva local con Ollama**: se generan `extraction_part_XXX.txt` con formato explicativo por temas y luego se consolidan en `full_study_notes_es.txt`.
+- **Validación heurística por parte**: cada extracción parcial se audita con warnings, flags fuertes y reporte global en `validation_report.json`.
 - **Traducción placeholder**: `translateToSpanish()` sigue siendo un placeholder hasta que decidas integrarla también con Ollama.
 
 ## Archivos clave
 
 - `backend/src/services/videoProcessor.ts`
   - `translateToSpanish()`
-  - `summarizeSpanish()`
+  - `generateStudyOutputs()`
 - `backend/src/services/ollamaClient.ts`
   - `generateSpanishSummary()`
-- `backend/src/services/transcriptionPreprocessor.ts`
-  - `preprocessTranscription()`
+- `backend/src/services/videoPartitioner.ts`
+  - `partitionVideoAudio()`
+- `backend/src/services/studyExtraction.ts`
+  - `generateExtractionForPart()`
+  - `consolidateExtractions()`
 
 ## Cómo extender luego con Ollama
 

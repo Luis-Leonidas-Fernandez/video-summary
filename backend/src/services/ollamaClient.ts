@@ -9,17 +9,26 @@ interface OllamaChatResponse {
   error?: string;
 }
 
+interface RepairExtractionInput {
+  rawExtraction: string;
+  transcription: string;
+  strongFlags: string[];
+}
+
 export async function generateSpanishSummary(rawTranscription: string): Promise<string> {
   const transcription = preprocessTranscription(rawTranscription);
   const system = [
-    'Sos un documentador de contenido obsesivo con la completitud y la fidelidad al texto fuente.',
-    'Tu tarea NO es resumir — es DOCUMENTAR cada concepto, término, idea y evento presente en la transcripción.',
+    'Sos un redactor de apuntes de estudio obsesivo con la completitud, la claridad y la fidelidad al texto fuente.',
+    'Tu tarea NO es resumir en pocas líneas: es EXTRAER y EXPLICAR casi todo el contenido del tramo sin inventar nada.',
     'Reglas obligatorias:',
     '- Usá únicamente información presente en la transcripción.',
-    '- Cada término, concepto o idea recibe su propio bullet con su explicación completa.',
-    '- Cuando aparece un término específico (japonés, técnico, cultural), incluí el término exacto seguido de su explicación.',
-    '  Ejemplo: "Karoshi (muerte por exceso de trabajo): diagnóstico médico oficial en Japón..."',
-    '- No comprimas ni agrupes ideas distintas en un solo bullet.',
+    '- NO agregar conceptos que no aparezcan explícitamente o inequívocamente en la transcripción.',
+    '- NO expandir listas más allá de lo mencionado en el texto.',
+    '- NO completar con conocimiento propio.',
+    '- Si detectás que estás enumerando elementos de forma repetitiva o extensa sin valor adicional, detené la enumeración.',
+    '- Priorizá explicación del contenido dicho por el orador, no taxonomías, catálogos ni series artificiales.',
+    '- Agrupá el contenido por temas reales del tramo.',
+    '- Los bullets solo se usan como apoyo para puntos clave, ejemplos o relaciones.',
     '- No agregues opiniones, consejos genéricos ni frases de cierre.',
     '- No hagas preguntas al final.',
     '- Respondé únicamente en español.',
@@ -28,19 +37,19 @@ export async function generateSpanishSummary(rawTranscription: string): Promise<
   const wordCount = transcription.split(/\s+/).length;
   const coverageRule = [
     `La transcripción tiene aproximadamente ${wordCount} palabras.`,
-    'ESTE NO ES UN RESUMEN — es un desglose completo.',
-    'Cada bullet documenta UN concepto, término, idea, evento o personaje.',
-    'El objetivo es que alguien que no vio el video entienda CADA parte del contenido leyendo los bullets.',
-    'PROHIBIDO comprimir. PROHIBIDO agrupar. PROHIBIDO omitir.',
-    'Si el contenido tiene 30 ideas distintas, el desglose tiene 30 bullets.',
+    'ESTO NO ES UN RESUMEN CORTO: es una extracción exhaustiva y explicativa.',
+    'El objetivo es que alguien que no vio el video entienda el tramo leyendo apuntes claros y fieles.',
+    'Cubrir casi todo NO significa inflar con listas artificiales.',
+    'Podés agrupar ideas si pertenecen al mismo tema real del tramo.',
+    'PROHIBIDO inventar, extrapolar o completar con conocimiento externo.',
   ].join('\n');
 
   const prompt = [
-    'Documentá el contenido completo de la siguiente transcripción, de principio a fin.',
+    'Extraé y explicá el contenido completo de la siguiente transcripción, de principio a fin.',
     coverageRule,
     '',
     'Recorré el contenido en orden cronológico sin saltear nada.',
-    'Cuando aparezca un término en otro idioma, incluí el término original y su explicación.',
+    'Cuando aparezca un término técnico, doctrinal o en otro idioma, explicalo solo si realmente aparece en la transcripción.',
     'No inventes contenido.',
     'NO muestres tu razonamiento.',
     'NO escribas frases como "Okay, let me..." o similares.',
@@ -49,13 +58,15 @@ export async function generateSpanishSummary(rawTranscription: string): Promise<
     '## Título probable',
     '- Un título breve basado solo en la transcripción.',
     '',
-    '## Contenido',
+    '## Contenido explicado',
     'Reglas:',
-    '- Un bullet por concepto, término, idea, evento o personaje.',
-    '- Cada bullet empieza con el nombre o concepto exacto, seguido de dos puntos y su explicación completa.',
-    '- Incluí definición, contexto, ejemplos, cifras y consecuencias si el contenido los menciona.',
-    '- Recorré el contenido de inicio a fin — el orden de los bullets debe seguir el orden del video.',
-    '- NADA puede faltar: personajes, términos, eventos, datos, reflexiones finales.',
+    '- Organizá la salida por temas usando subtítulos `### Tema ...` o `### <nombre del tema>`.',
+    '- Debajo de cada tema, escribí una explicación breve en lenguaje natural.',
+    '- Usá bullets solo para puntos clave, ejemplos, relaciones o consecuencias mencionadas.',
+    '- Solo usá el formato `Término: explicación` cuando el video realmente trate ese término como unidad relevante.',
+    '- Recorré el contenido de inicio a fin: el orden de los temas debe seguir el orden del video.',
+    '- NADA importante puede faltar: argumentos, ejemplos, nombres, relaciones, citas doctrinales, conclusiones y matices del tramo.',
+    '- NO conviertas la salida en un glosario ni en una lista interminable de etiquetas.',
     '',
     '## Vacíos o ambigüedades (OPCIONAL)',
     '- Incluí esta sección ÚNICAMENTE si hay algo genuinamente ambiguo: una contradicción, una palabra ininteligible o una afirmación incompleta.',
@@ -87,7 +98,7 @@ export async function generateSpanishSummary(rawTranscription: string): Promise<
     return recovered;
   }
 
-  throw new Error('Ollama devolvió un resumen sin el formato esperado y no se pudo recuperar.');
+  throw new Error('Ollama devolvió una extracción sin el formato esperado y no se pudo recuperar.');
 }
 
 const CONTINUATION_PROMPT = [
@@ -143,7 +154,7 @@ async function runOllamaChat({
   const messages: Array<{ role: string; content: string }> = priorAssistantContent
     ? [
         { role: 'system', content: system },
-        { role: 'user', content: 'Continuá el resumen que empezaste. La transcripción ya fue proporcionada.' },
+        { role: 'user', content: 'Continuá la extracción de estudio que empezaste. La transcripción ya fue proporcionada.' },
         { role: 'assistant', content: priorAssistantContent },
         { role: 'user', content: CONTINUATION_PROMPT },
       ]
@@ -191,13 +202,13 @@ async function runOllamaChat({
 
     const text = data.message?.content?.trim() ?? '';
     if (!text) {
-      throw new Error('Ollama no devolvió contenido de resumen.');
+      throw new Error('Ollama no devolvió contenido de extracción.');
     }
 
     return text;
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error('Ollama agotó el tiempo de espera al generar el resumen.');
+      throw new Error('Ollama agotó el tiempo de espera al generar la extracción.');
     }
 
     throw error;
@@ -221,7 +232,9 @@ async function repairSummaryOutput(rawSummary: string, transcription: string): P
     '- Eliminá cualquier razonamiento interno, dudas, prefacios o frases como "Okay, I need..."',
     '- Usá solo información presente en la transcripción fuente.',
     '- Empezá DIRECTAMENTE con `## Título probable`.',
-    '- Respetá exactamente estas secciones: `## Título probable`, `## Contenido`, `## Vacíos o ambigüedades` (opcional).',
+    '- Respetá exactamente estas secciones: `## Título probable`, `## Contenido explicado`, `## Vacíos o ambigüedades` (opcional).',
+    '- Dentro de `## Contenido explicado`, organizá por temas usando subtítulos `### ...`.',
+    '- No conviertas la salida en una lista infinita de términos.',
     '',
     'Salida defectuosa:',
     '"""',
@@ -235,6 +248,45 @@ async function repairSummaryOutput(rawSummary: string, transcription: string): P
   ].join('\n');
 
   return completeResponse({ system, prompt });
+}
+
+export async function repairSpanishSummary({
+  rawExtraction,
+  transcription,
+  strongFlags,
+}: RepairExtractionInput): Promise<string> {
+  const system = [
+    'Sos un editor estricto de apuntes de estudio.',
+    'Recibís una extracción defectuosa y tu trabajo es devolver SOLO una versión final corregida y fiel.',
+    'Respondé únicamente en español.',
+    'No expliques nada. No menciones que corregiste la salida.',
+  ].join('\n');
+
+  const prompt = [
+    'Corregí esta extracción defectuosa para que sea válida.',
+    'Problemas detectados:',
+    ...strongFlags.map((flag) => `- ${flag}`),
+    '',
+    'Reglas obligatorias:',
+    '- Usá solo información presente en la transcripción fuente.',
+    '- Empezá DIRECTAMENTE con `## Título probable`.',
+    '- Respetá exactamente estas secciones: `## Título probable`, `## Contenido explicado`, `## Vacíos o ambigüedades` (opcional).',
+    '- Organizá `## Contenido explicado` por temas usando subtítulos `### ...`.',
+    '- No expandas listas. No inventes taxonomías. No agregues entidades nuevas.',
+    '- Si una lista empieza a repetirse o inflarse, cortala y explicá el punto en lenguaje natural.',
+    '',
+    'Extracción defectuosa:',
+    '"""',
+    rawExtraction,
+    '"""',
+    '',
+    'Transcripción fuente:',
+    '"""',
+    transcription,
+    '"""',
+  ].join('\n');
+
+  return completeResponse({ system, prompt, maxContinuations: 1 });
 }
 
 function sanitizeSummaryOutput(raw: string): string {
@@ -255,39 +307,7 @@ function sanitizeSummaryOutput(raw: string): string {
   // Normalize * bullets to -
   text = text.replace(/^\*+\s+/gm, '- ');
 
-  // Convert paragraph sections to bullet lists
-  text = convertParagraphsToBullets(text);
-
   return text;
-}
-
-function convertParagraphsToBullets(text: string): string {
-  const parts = text.split(/(?=^##+ )/m);
-
-  return parts
-    .map((part) => {
-      const headingMatch = part.match(/^(##+ [^\n]+)\n([\s\S]*)/);
-      if (!headingMatch) return part;
-
-      const [, heading, body] = headingMatch;
-      const trimmed = body.trim();
-
-      if (!trimmed) return `${heading}\n`;
-
-      const hasBullets = /^[-•]\s/m.test(trimmed);
-      if (hasBullets) return `${heading}\n${trimmed}\n\n`;
-
-      const sentences = trimmed
-        .split(/(?<=[.?!])\s+/)
-        .map((s) => s.trim())
-        .filter((s) => s.length > 10);
-
-      if (sentences.length <= 1) return `${heading}\n${trimmed}\n\n`;
-
-      const bullets = sentences.map((s) => `- ${s}`).join('\n');
-      return `${heading}\n${bullets}\n\n`;
-    })
-    .join('');
 }
 
 function normalizeText(text: string): string {
@@ -301,7 +321,7 @@ function isStructuredSummary(text: string): boolean {
   const n = normalizeText(text);
   return (
     /##+ titulo probable/.test(n) &&
-    /##+ contenido/.test(n)
+    /##+ contenido explicado/.test(n)
   );
 }
 
@@ -342,7 +362,7 @@ function recoverStructuredSummary(raw: string, transcription: string): string | 
     '## Título probable',
     `- ${title}`,
     '',
-    '## Contenido',
+    '## Contenido explicado',
     ...uniqueContentBullets.map((bullet) => `- ${normalizeBulletText(bullet)}`),
     ...(uniqueAmbiguities.length > 0
       ? ['', '## Vacíos o ambigüedades', ...uniqueAmbiguities.map((bullet) => `- ${bullet}`)]

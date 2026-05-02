@@ -1,7 +1,9 @@
 import path from 'node:path';
 import { outputRoot, ensureDir, listJobFiles, writeJson } from '../utils/files.js';
 import { processVideoJob } from './videoProcessor.js';
-import type { CreateJobInput, JobFileEntry, JobRecord, JobStatus } from '../types.js';
+import type { CreateJobInput, JobFileEntry, JobRecord, JobResponse, JobStatus } from '../types.js';
+
+const DEFAULT_LOG_TAIL = 200;
 
 class JobQueue {
   private jobs = new Map<string, JobRecord>();
@@ -41,6 +43,15 @@ class JobQueue {
 
   getJob(id: string): JobRecord | undefined {
     return this.jobs.get(id);
+  }
+
+  getJobResponse(id: string, tail = DEFAULT_LOG_TAIL): JobResponse | undefined {
+    const job = this.jobs.get(id);
+    if (!job) {
+      return undefined;
+    }
+
+    return serializeJob(job, tail);
   }
 
   getJobFiles(id: string): JobFileEntry[] {
@@ -99,6 +110,29 @@ class JobQueue {
   private async persistJob(job: JobRecord): Promise<void> {
     await writeJson(path.join(job.outputDir, 'job.json'), job);
   }
+}
+
+export function serializeJob(job: JobRecord, tail = DEFAULT_LOG_TAIL): JobResponse {
+  const safeTail = Math.max(0, tail);
+  const logs = safeTail > 0 ? job.logs.slice(-safeTail) : [];
+
+  return {
+    id: job.id,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    status: job.status,
+    url: job.url,
+    language: job.language,
+    generateTranscription: job.generateTranscription,
+    generateTranslation: job.generateTranslation,
+    generateSummary: job.generateSummary,
+    outputDir: job.outputDir,
+    files: job.files,
+    logs,
+    logCount: job.logs.length,
+    logsTruncated: job.logs.length > logs.length,
+    error: job.error,
+  };
 }
 
 export const jobQueue = new JobQueue();

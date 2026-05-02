@@ -95,6 +95,26 @@ label {
   box-shadow: 0 20px 40px rgba(15, 23, 42, 0.35);
 }
 
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.panel-caption {
+  margin: 0.5rem 0 0.75rem;
+  color: #94a3b8;
+  font-size: 0.95rem;
+}
+
+.ghost-button {
+  background: transparent;
+  border: 1px solid #334155;
+  color: #cbd5e1;
+  padding: 0.55rem 0.9rem;
+}
+
 .form-panel {
   display: flex;
   flex-direction: column;
@@ -141,13 +161,14 @@ label {
 }
 
 .log-viewer {
-  max-height: 350px;
+  max-height: 320px;
   overflow: auto;
   border-radius: 0.75rem;
   padding: 1rem;
   background: #020617;
   color: #cbd5e1;
   white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .file-list {
@@ -204,4 +225,73 @@ label {
 
 .summary-spacer {
   height: 0.5rem;
+}
+
+.validation-list {
+  display: grid;
+  gap: 0.9rem;
+}
+
+.validation-card {
+  border: 1px solid #334155;
+  border-radius: 0.85rem;
+  padding: 1rem;
+  background: #0b1220;
+}
+
+.validation-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.validation-card h3 {
+  margin: 0;
+}
+
+.validation-meta,
+.validation-ok {
+  margin: 0.35rem 0 0;
+  color: #94a3b8;
+}
+
+.validation-pill {
+  display: inline-flex;
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  font-weight: 700;
+  font-size: 0.9rem;
+}
+
+.validation-accepted {
+  background: #14532d;
+}
+
+.validation-accepted_with_warnings {
+  background: #854d0e;
+}
+
+.validation-repaired {
+  background: #9a3412;
+}
+
+.validation-failed {
+  background: #7f1d1d;
+}
+
+.validation-details {
+  margin: 0.9rem 0;
+  padding-left: 1.2rem;
+  color: #e2e8f0;
+}
+
+.validation-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.validation-links a {
+  color: #93c5fd;
 }

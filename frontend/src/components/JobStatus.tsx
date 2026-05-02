@@ -25,6 +25,10 @@ export function JobStatus({ job, error }: JobStatusProps) {
             <p className={`status-pill status-${job.status}`}>{job.status}</p>
           </div>
           <div>
+            <strong>Logs</strong>
+            <p>{job.logCount} líneas{job.logsTruncated ? ' (vista parcial)' : ''}</p>
+          </div>
+          <div>
             <strong>URL</strong>
             <p>{job.url}</p>
           </div>

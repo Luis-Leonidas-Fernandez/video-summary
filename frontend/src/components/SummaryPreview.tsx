@@ -10,10 +10,10 @@ function renderLine(line: string, index: number) {
     return <div key={`spacer-${index}`} className="summary-spacer" />;
   }
 
-  if (trimmed.startsWith('## ')) {
+  if (/^#+\s+/.test(trimmed)) {
     return (
       <h3 key={`heading-${index}`} className="summary-heading">
-        {trimmed.replace(/^##\s+/, '')}
+        {trimmed.replace(/^#+\s+/, '')}
       </h3>
     );
   }
@@ -70,12 +70,12 @@ export function SummaryPreview({ content, isLoading }: SummaryPreviewProps) {
 
   return (
     <section className="panel">
-      <h2>Resumen generado</h2>
+      <h2>Material de estudio generado</h2>
 
-      {isLoading && !content ? <p>Cargando resumen...</p> : null}
+      {isLoading && !content ? <p>Cargando material de estudio...</p> : null}
 
       {!isLoading && !content ? (
-        <p>Cuando el job genere <code>summary_es.txt</code>, lo vas a ver estructurado acá.</p>
+        <p>Cuando el job genere <code>full_study_notes_es.txt</code>, lo vas a ver estructurado acá.</p>
       ) : null}
 
       {content ? <div className="summary-preview">{blocks}</div> : null}

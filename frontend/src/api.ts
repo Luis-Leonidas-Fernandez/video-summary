@@ -38,7 +38,36 @@ export interface JobResponse {
   outputDir: string;
   files: JobFile[];
   logs: string[];
+  logCount: number;
+  logsTruncated: boolean;
   error?: string;
+  progress?: number;
+}
+
+export interface ValidationReportPart {
+  part: string;
+  status: 'accepted' | 'accepted_with_warnings' | 'repaired' | 'failed';
+  decisionReason: string;
+  metrics: {
+    headingCount: number;
+    unmatchedCount: number;
+    unmatchedRatio: number;
+    semanticMatchRatio: number;
+    strongDerivaDetected: boolean;
+  };
+  matches: Array<{
+    label: string;
+    normalizedLabel: string;
+    matchType: 'literal_match' | 'alias_match' | 'semantic_heading_match' | 'unmatched';
+    reason: string;
+  }>;
+  warnings: string[];
+  strongFlags: string[];
+  repairAttempts: number;
+}
+
+export interface ValidationReport {
+  parts: ValidationReportPart[];
 }
 
 async function parseJson<T>(response: Response): Promise<T> {

@@ -1,10 +1,21 @@
 import { Router } from 'express';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { jobQueue, isValidLanguage, isValidUrl } from '../services/jobQueue.js';
-import type { CreateJobInput } from '../types.js';
+import { jobQueue, isValidLanguage, isValidUrl, serializeJob } from '../services/jobQueue.js';
+import type { CreateJobInput, JobLogsResponse } from '../types.js';
 
 export const jobsRouter = Router();
+const DEFAULT_LOG_TAIL = 200;
+const MAX_LOG_TAIL = 1000;
+
+function parseTailParam(value: unknown, fallback = DEFAULT_LOG_TAIL): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+
+  return Math.min(Math.floor(parsed), MAX_LOG_TAIL);
+}
 
 jobsRouter.post('/', async (req, res) => {
   const body = req.body as Partial<CreateJobInput>;
@@ -27,17 +38,38 @@ jobsRouter.post('/', async (req, res) => {
     generateSummary: Boolean(body.generateSummary),
   });
 
-  res.status(202).json(job);
+  res.status(202).json(serializeJob(job));
 });
 
 jobsRouter.get('/:id', (req, res) => {
-  const job = jobQueue.getJob(req.params.id);
+  const job = jobQueue.getJobResponse(req.params.id, DEFAULT_LOG_TAIL);
   if (!job) {
     res.status(404).json({ error: 'Job no encontrado.' });
     return;
   }
 
   res.json(job);
+});
+
+jobsRouter.get('/:id/logs', (req, res) => {
+  const job = jobQueue.getJob(req.params.id);
+  if (!job) {
+    res.status(404).json({ error: 'Job no encontrado.' });
+    return;
+  }
+
+  const tail = parseTailParam(req.query.tail);
+  const logs = tail > 0 ? job.logs.slice(-tail) : [];
+
+  const response: JobLogsResponse = {
+    jobId: job.id,
+    logs,
+    logCount: job.logs.length,
+    tail,
+    logsTruncated: job.logs.length > logs.length,
+  };
+
+  res.json(response);
 });
 
 jobsRouter.get('/:id/files', (req, res) => {

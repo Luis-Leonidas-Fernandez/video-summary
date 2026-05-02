@@ -37,7 +37,8 @@ export const appConfig = {
   whisperCppModelPath: process.env.WHISPER_CPP_MODEL_PATH ?? '',
   // M4 Pro has 12 performance cores — 10 is a safe default leaving headroom for the OS
   whisperCppThreads: Number(process.env.WHISPER_CPP_THREADS ?? 10),
-  whisperChunkDurationSeconds: Number(process.env.WHISPER_CHUNK_DURATION_SECONDS ?? 180),
+  videoPartDurationSeconds: Number(process.env.VIDEO_PART_DURATION_SECONDS ?? 1800),
+  whisperChunkDurationSeconds: Number(process.env.WHISPER_CHUNK_DURATION_SECONDS ?? 90),
   whisperCppGlossary:
     process.env.WHISPER_CPP_GLOSSARY ??
     'Japan, Yusuke, Taro, Kenji, karoshi, futoko, ijime, juku, shukatsu, naitei, ronin, konbini, pachinko, onigiri, Aokigahara',
