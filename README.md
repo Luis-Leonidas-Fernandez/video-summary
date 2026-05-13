@@ -426,7 +426,7 @@ async function translateToSpanish(outputDir: string, transcriptionPath: string):
 
 - Si reiniciás el backend, los jobs en memoria se pierden aunque los archivos ya escritos en `/output` permanecen.
 - La cola es secuencial y deliberadamente simple.
-- No hay cancelación de jobs todavía.
+- Ya existe cancelación de jobs desde la UI y la API, pero la cola sigue siendo secuencial y el modelo de ejecución no es distribuido.
 - La traducción todavía no usa un modelo real y sigue siendo placeholder.
 - YouTube puede responder con `HTTP 429` en algunos intentos de `yt-dlp`; cuando pasa, el job falla y conviene reintentar.
 - El resumen depende bastante del modelo local configurado y del tiempo de respuesta de Ollama.
@@ -434,7 +434,6 @@ async function translateToSpanish(outputDir: string, transcriptionPath: string):
 ## Próximos pasos razonables
 
 1. Integrar también la traducción con Ollama.
-2. Agregar cancelación de jobs.
-3. Recuperar jobs desde `job.json` al reiniciar.
-4. Mejorar streaming de progreso al frontend con SSE o WebSockets.
-5. Afinar thresholds de grounding y decisión por claim con casos reales.
+2. Recuperar jobs desde `job.json` al reiniciar.
+3. Mejorar streaming de progreso al frontend con SSE o WebSockets.
+4. Afinar thresholds de grounding y decisión por claim con casos reales.
