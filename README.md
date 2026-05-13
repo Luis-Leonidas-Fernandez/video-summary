@@ -28,11 +28,16 @@ video-summary/
     src/
       index.ts
       routes/jobs.routes.ts
+      routes/modelSelection.routes.ts
       services/
+        aiRuntimeManager.ts
         jobQueue.ts
+        modelSelectionService.ts
         ollamaClient.ts
+        opikTracer.ts
         studyArtifacts.ts
         studyExtraction.ts
+        studyGroundingPipeline.ts
         transcriptionPreprocessor.ts
         videoProcessor.ts
         videoPartitioner.ts
@@ -45,9 +50,12 @@ video-summary/
       App.tsx
       api.ts
       components/
+        AiRuntimeBanner.tsx
         JobForm.tsx
         JobStatus.tsx
         FileList.tsx
+        GroundingSummary.tsx
+        JobResourceUsagePanel.tsx
         SummaryPreview.tsx
       main.tsx
       styles.css
@@ -99,9 +107,9 @@ OLLAMA_MAX_LOADED_MODELS=1
 OLLAMA_KEEP_ALIVE=2m
 OLLAMA_IDLE_SHUTDOWN_MS=30000
 FULL_NOTES_OLLAMA_NUM_PREDICT=700
-FULL_NOTES_OLLAMA_NUM_CTX=2048
+FULL_NOTES_OLLAMA_NUM_CTX=8192
 GROUNDING_OLLAMA_NUM_PREDICT=700
-GROUNDING_OLLAMA_NUM_CTX=4096
+GROUNDING_OLLAMA_NUM_CTX=8192
 # Legacy fallback temporal si todavía no migraste:
 # OLLAMA_NUM_PREDICT=700
 # OLLAMA_NUM_CTX=2048
@@ -143,6 +151,27 @@ En la UI vas a ver un selector global dentro del panel **Runtime de IA**:
 - si hay jobs IA activos, el cambio se bloquea hasta que el runtime quede libre
 
 Si el modelo persistido desaparece de Ollama, el backend intenta volver al `OLLAMA_MODEL` del `.env` y te muestra una advertencia.
+
+### 2.1) Observabilidad con Opik
+
+El backend también está instrumentado con **Opik** para seguir trazas del pipeline y de las llamadas al modelo.
+
+- configuración inicial en `backend/src/index.ts`
+- cliente en `backend/src/services/opikTracer.ts`
+- trace raíz del pipeline en `backend/src/services/videoProcessor.ts`
+- spans/calls del LLM enlazados desde `backend/src/services/ollamaClient.ts`
+
+Eso te permite ver:
+
+- descarga
+- transcripción
+- resumen / extracción
+- llamadas LLM asociadas al trace activo
+
+Importante:
+
+- la instrumentación está en el backend, no en el frontend
+- Opik sirve para observabilidad y debugging; no cambia la lógica del pipeline
 
 ### 3) Dependencias del backend
 
@@ -252,12 +281,13 @@ npm run dev:frontend
 7. `whisper.cpp` transcribe subchunk por subchunk, usando el idioma manual si lo cargás y un prompt con glosario.
 8. El backend fusiona los subchunks en `transcription_part_XXX.txt` y luego consolida todas las partes en `transcription.txt`.
 9. Si activás traducción, se crea `translation_es.txt` como placeholder.
-10. Si activás resumen, Ollama genera una extracción exhaustiva explicativa por parte (`extraction_part_XXX.txt`) **con citas a chunks** y luego consolida todo en `full_study_notes_es.txt`.
-11. El backend extrae claims estructurados por parte (`claims_part_XXX.json`) y genera además un `chunk_manifest.json`.
+10. Si activás resumen, Ollama genera una extracción exhaustiva por parte (`extraction_part_XXX.txt`) y luego consolida todo en `full_study_notes_es.txt`.
+11. El backend arma un `chunk_manifest.json`, un evidence pack con aliases de citas (`[C1]`, `[C2]`, etc.) y extrae claims estructurados por parte (`claims_part_XXX.json`).
 12. Un worker Python con LlamaIndex valida esos claims contra los chunks fuente y produce `grounding_report.json`.
-13. Se mantiene `validation_report.json` como fallback legacy para compatibilidad y debugging.
-14. También se generan artefactos de estudio derivados: `outline_es.txt`, `key_concepts_es.txt`, `questions_es.txt` y `glossary_es.txt`.
-15. Todos los logs del proceso se escriben también en `logs.txt`.
+13. Si una ventana queda demasiado comprimida o con reasoning débil, entra el pipeline de recuperación semántica / thin reasoning para intentar reparar extracción, señales y grounding antes de degradar el resultado final.
+14. `validation_report.json` se mantiene como capa legacy de compatibilidad y debugging, pero ya no es la única fuente de validación del sistema.
+15. También se generan artefactos de estudio derivados: `outline_es.txt`, `key_concepts_es.txt`, `questions_es.txt` y `glossary_es.txt`.
+16. Todos los logs del proceso se escriben también en `logs.txt`.
 
 ## Endpoints
 
