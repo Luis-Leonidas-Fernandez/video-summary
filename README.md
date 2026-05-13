@@ -313,11 +313,14 @@ Body:
 Devuelve el estado actual del job:
 
 - `pending`
+- `cancelling`
+- `cancelled`
 - `downloading`
 - `transcribing`
 - `translating`
 - `summarizing`
 - `completed`
+- `completed_with_warnings`
 - `failed`
 
 Además incluye:
@@ -332,6 +335,59 @@ Además incluye:
 Para inspección adicional de logs existe también:
 
 - `GET /api/jobs/:id/logs?tail=200`
+
+### `POST /api/jobs/:id/cancel`
+
+Solicita la cancelación del job.
+
+Comportamiento actual:
+
+- si el job todavía está en `pending`, se saca de la cola y pasa a `cancelled`
+- si el job ya está corriendo, pasa a `cancelling`, se abortan requests activos y se fuerza apagado/unload del runtime IA cuando corresponde
+- si ya terminó, devuelve el job en su estado final sin hacer nada extra
+
+### `GET /api/health`
+
+Devuelve el estado del runtime local de IA, por ejemplo:
+
+- `aiRuntime`
+- `ownedByCurrentSession`
+- `activeJobsCount`
+- `ollamaModel`
+- `idleShutdownMs`
+- timestamps de actividad/apagado programado cuando aplican
+
+### `GET /api/models`
+
+Lista los modelos locales detectados en Ollama a través de `/api/tags`.
+
+Notas:
+
+- el endpoint puede devolver también embeddings
+- los embeddings salen marcados como `selectable=false`
+- el frontend solo deja elegir modelos aptos como LLM principal
+
+### `GET /api/model-selection`
+
+Devuelve la selección global actual del modelo principal:
+
+- `activeModel`
+- `defaultModel`
+- `source` (`env` o `runtime_state`)
+- `activeModelAvailable`
+- `availableModels`
+- `warning` si hubo fallback o inconsistencia
+
+### `POST /api/model-selection`
+
+Cambia el modelo LLM principal global para **jobs futuros**.
+
+Reglas actuales:
+
+- persiste la selección en `.runtime/model-selection.json`
+- valida que el modelo exista en Ollama local
+- no deja cambiarlo mientras haya jobs IA activos (`409`)
+- no toca el modelo de embeddings ni Whisper
 
 ### `GET /api/jobs/:id/files`
 
@@ -350,46 +406,99 @@ output/
   job_1714200000000/
     job.json
     audio.mp3
+    audio_denoised.wav
     transcription_part_001.txt
     extraction_part_001.txt
     transcription.txt
     chunk_manifest.json
     claims_part_001.json
+    evidence_part_001.json
+    evidence_pack_part_001.md
+    citation_integrity_part_001.json
     full_study_notes_es.txt
     translation_es.txt
     summary_es.txt
     validation_report.json
     grounding_report.json
+    grounding_worker_report.json
     outline_es.txt
     key_concepts_es.txt
     questions_es.txt
     glossary_es.txt
+    resource_stages.jsonl
     logs.txt
 ```
 
+Además, cuando entran ventanas con recuperación semántica/thin reasoning, pueden aparecer artifacts por ventana como:
+
+- `thin_reasoning_eval_W*.json`
+- `reasoning_resolved_changes_W*.json`
+- `controlled_rewrite_W*.json`
+- `evidence_hints_W*.json`
+
 ## Decisiones técnicas actuales
 
-- **Sin base de datos**: toda la metadata vive en memoria mientras el proceso Node está levantado y además se persiste un snapshot en `job.json`.
+- **Sin base de datos**: toda la metadata principal vive en archivos locales (`output/job_xxx/job.json`, `logs.txt`, reports JSON/TXT) y el proceso también mantiene un mapa en memoria para servir la UI.
+- **Recuperación al reiniciar**: al boot, el backend relee `job.json` desde `/output`; si encuentra jobs que quedaron a mitad de ejecución, los marca como `failed` por reinicio del servidor en lugar de “olvidarlos”.
 - **Cola simple en memoria**: procesa un job por vez para evitar mezclar stdout/stderr y simplificar el flujo local.
+- **Cancelación cooperativa**: la cancelación usa `AbortController`, corta requests activos y fuerza stop/unload del runtime cuando corresponde.
 - **`spawn` en vez de `execFile`**: permite leer logs en tiempo real desde `stdout` y `stderr`.
 - **Transcripción local optimizada para Mac**: se usa `whisper.cpp` con `whisper-cli`, modelo `large-v3`, prompt con glosario y denoise previo en `ffmpeg`.
 - **Procesamiento jerárquico**: primero parte el video en bloques de 30 minutos y recién después transcribe cada parte en subchunks más chicos.
 - **Extracción exhaustiva local con Ollama**: se generan `extraction_part_XXX.txt` con formato explicativo por temas y luego se consolidan en `full_study_notes_es.txt`.
 - **Grounding por claims con citas**: cada extracción parcial genera claims estructurados y se valida contra chunks reales de la transcripción usando LlamaIndex; el resultado principal queda en `grounding_report.json`.
-- **Fallback legacy**: el viejo `validation_report.json` sigue existiendo como red de seguridad y compatibilidad temporal.
+- **Recovery por ventanas**: si una ventana sale con schema roto, drift, low content o thin reasoning, el backend puede intentar contract repair, strict re-emit, semantic enrichment, preserve previous extraction y fallback controlado.
+- **Thin reasoning chain**: el pipeline puede correr planner → critique → resolve → controlled rewrite con hints derivados de evidencia para intentar rescatar ventanas comprimidas sin inventar contenido.
+- **Fallback legacy**: `validation_report.json` sigue existiendo como red de seguridad y compatibilidad temporal, pero hoy convive con `grounding_report.json` y artifacts de recuperación más ricos.
+- **Runtime IA on-demand**: Ollama no se levanta al abrir la app; se inicia solo cuando un job con `generateSummary=true` lo necesita, queda en `idle` al terminar y puede apagarse solo para liberar RAM.
+- **Selector global de modelo**: el LLM principal se elige desde la UI, se persiste en `.runtime/model-selection.json` y se congela en `job.modelMetadata` al inicio de cada job para que el histórico siga siendo comparable.
 - **Traducción placeholder**: `translateToSpanish()` sigue siendo un placeholder hasta que decidas integrarla también con Ollama.
 
 ## Archivos clave
 
+- `backend/src/index.ts`
+  - arranque del backend
+  - health
+  - routers
+  - inicialización de selección de modelo
+- `backend/src/services/jobQueue.ts`
+  - cola secuencial
+  - persistencia de `job.json`
+  - restauración al reiniciar
+  - cancelación
+- `backend/src/services/aiRuntimeManager.ts`
+  - boot/shutdown de Ollama on-demand
+  - idle shutdown
+  - unload del modelo
+- `backend/src/services/modelSelectionService.ts`
+  - selector global del modelo LLM principal
+  - persistencia en `.runtime/model-selection.json`
+  - validación contra `/api/tags`
 - `backend/src/services/videoProcessor.ts`
-  - `translateToSpanish()`
-  - `generateStudyOutputs()`
+  - download + denoise + transcripción + resumen
+  - opik trace raíz
+  - monitoreo de recursos
 - `backend/src/services/ollamaClient.ts`
-  - `generateSpanishSummary()`
+  - llamadas a Ollama
+  - continuations
+  - spans LLM
+- `backend/src/services/studyGroundingPipeline.ts`
+  - chunk manifest
+  - claims
+  - grounding report
+  - consolidation por parte
 - `backend/src/services/claimExtraction.ts`
-  - `extractClaimsFromStudyNotes()`
+  - extracción de claims estructurados desde ventanas
 - `backend/src/services/groundingService.ts`
   - `generateGroundingReport()`
+- `backend/src/services/windowRecoveryService.ts`
+  - resolución de ventanas rotas o comprimidas
+- `backend/src/services/semanticEnrichmentService.ts`
+  - intento de enriquecimiento semántico cuando una ventana queda floja
+- `backend/src/services/thinReasoningChainService.ts`
+  - planner / critique / resolve / controlled rewrite
+- `backend/src/services/evidenceDerivedPromptHintsService.ts`
+  - hints evidence-driven para planner/resolve
 - `backend/grounding_worker/grounding_worker.py`
   - valida claims contra chunks con LlamaIndex
 - `backend/src/services/videoPartitioner.ts`
@@ -397,6 +506,19 @@ output/
 - `backend/src/services/studyExtraction.ts`
   - `generateExtractionForPart()`
   - `consolidateExtractions()`
+- `frontend/src/App.tsx`
+  - polling
+  - carga de reports
+  - wiring general de la UI
+- `frontend/src/components/AiRuntimeBanner.tsx`
+  - estado del runtime
+  - selector global de modelo
+- `frontend/src/components/GroundingSummary.tsx`
+  - lectura del grounding moderno
+- `frontend/src/components/ValidationSummary.tsx`
+  - lectura del reporte legacy
+- `frontend/src/components/JobResourceUsagePanel.tsx`
+  - RAM/CPU/procesos del job
 
 ## Cómo extender luego con Ollama
 
@@ -424,16 +546,19 @@ async function translateToSpanish(outputDir: string, transcriptionPath: string):
 
 ## Limitaciones actuales
 
-- Si reiniciás el backend, los jobs en memoria se pierden aunque los archivos ya escritos en `/output` permanecen.
 - La cola es secuencial y deliberadamente simple.
-- Ya existe cancelación de jobs desde la UI y la API, pero la cola sigue siendo secuencial y el modelo de ejecución no es distribuido.
+- La cancelación existe, pero el modelo de ejecución sigue siendo local y no distribuido.
 - La traducción todavía no usa un modelo real y sigue siendo placeholder.
+- La selección actual del modelo LLM principal es global; no existe todavía selección per-job ni perfiles tipo `fast/balanced/quality`.
+- El modelo de embeddings para grounding sigue separado y no se selecciona desde la UI.
 - YouTube puede responder con `HTTP 429` en algunos intentos de `yt-dlp`; cuando pasa, el job falla y conviene reintentar.
-- El resumen depende bastante del modelo local configurado y del tiempo de respuesta de Ollama.
+- El pipeline de recovery semántico/thin reasoning mejora observabilidad y rescate de ventanas, pero todavía puede dejar partes en `completed_with_warnings` o `needs_review` según el caso.
+- El resumen depende bastante del modelo local configurado, del tiempo de respuesta de Ollama y de la memoria disponible de la máquina.
 
 ## Próximos pasos razonables
 
 1. Integrar también la traducción con Ollama.
-2. Recuperar jobs desde `job.json` al reiniciar.
-3. Mejorar streaming de progreso al frontend con SSE o WebSockets.
-4. Afinar thresholds de grounding y decisión por claim con casos reales.
+2. Mejorar streaming de progreso al frontend con SSE o WebSockets.
+3. Afinar thresholds de grounding y decisión por claim con casos reales.
+4. Seguir endureciendo el pipeline de thin reasoning / recovery para reducir `completed_with_warnings`.
+5. Si más adelante lo necesitás, separar la selección de LLM principal, embeddings y perfiles de inferencia sin mezclar responsabilidades en una sola UI.
