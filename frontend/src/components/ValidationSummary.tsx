@@ -37,7 +37,7 @@ export function ValidationSummary({ report, files, isLoading }: ValidationSummar
   if (isLoading && !report) {
     return (
       <section className="panel">
-        <h2>Señales de revisión</h2>
+        <h2>Señales de revisión (legacy)</h2>
         <p>Cargando estado de validación...</p>
       </section>
     );
@@ -49,9 +49,9 @@ export function ValidationSummary({ report, files, isLoading }: ValidationSummar
 
   return (
     <section className="panel">
-      <h2>Señales de revisión</h2>
+      <h2>Señales de revisión (legacy)</h2>
       <p className="panel-caption">
-        Las partes reparadas o con advertencias conviene revisarlas contra la transcripción parcial.
+        Este reporte queda como fallback temporal cuando no hay grounding por claims disponible.
       </p>
 
       <div className="validation-list">

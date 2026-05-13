@@ -12,6 +12,7 @@ const initialState: CreateJobPayload = {
   generateTranscription: true,
   generateTranslation: true,
   generateSummary: true,
+  speakerCountHint: 3,
 };
 
 export function JobForm({ isSubmitting, onSubmit }: JobFormProps) {
@@ -61,6 +62,25 @@ export function JobForm({ isSubmitting, onSubmit }: JobFormProps) {
           <option value="Spanish" />
           <option value="Japanese" />
         </datalist>
+      </label>
+
+      <label>
+        Cantidad posible de speakers
+        <input
+          type="number"
+          min={1}
+          max={12}
+          value={form.speakerCountHint ?? ''}
+          onChange={(event) =>
+            setForm((current) => ({
+              ...current,
+              speakerCountHint: event.target.value === '' ? undefined : Number(event.target.value),
+            }))
+          }
+        />
+        <small>
+          Si sabés cuántas personas hablan, ponelo acá. Se usa como <em>hint</em> para marcar chunks con posible solapamiento y bajar confianza cuando varias voces se pisan.
+        </small>
       </label>
 
       <fieldset>
