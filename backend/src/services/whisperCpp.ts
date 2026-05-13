@@ -80,11 +80,13 @@ export async function transcribeAudio({
   outputBase,
   language,
   onLog,
+  signal,
 }: {
   audioPath: string;
   outputBase: string;
   language: JobLanguage;
   onLog: (line: string) => Promise<void>;
+  signal?: AbortSignal;
 }): Promise<string> {
   const transcriptionPath = `${outputBase}.txt`;
 
@@ -109,6 +111,7 @@ export async function transcribeAudio({
   await runCommand({
     command: appConfig.whisperCppBinary,
     args,
+    signal,
     onStdout: async (chunk) => {
       for (const line of chunk.split(/\r?\n/).filter(Boolean)) {
         await onLog(`[whisper-cli] ${line}`);

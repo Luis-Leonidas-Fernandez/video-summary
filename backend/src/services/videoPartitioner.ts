@@ -23,10 +23,12 @@ export async function partitionVideoAudio({
   outputDir,
   inputAudioPath,
   log,
+  signal,
 }: {
   outputDir: string;
   inputAudioPath: string;
   log: Logger;
+  signal?: AbortSignal;
 }): Promise<string[]> {
   const partsDir = path.join(outputDir, 'video_parts');
   const outputPattern = path.join(partsDir, 'part_%03d.wav');
@@ -59,6 +61,7 @@ export async function partitionVideoAudio({
       'copy',
       outputPattern,
     ],
+    signal,
     onStdout: async (chunk) => {
       for (const line of chunk.split(/\r?\n/).filter(Boolean)) {
         await log(`[ffmpeg:video-part] ${line}`);
