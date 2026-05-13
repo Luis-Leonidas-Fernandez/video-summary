@@ -8,3 +8,5 @@ output/*
 .DS_Store
 .ollama/
 backend/.env
+.runtime/
+backend/grounding_worker/.venv/
