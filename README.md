@@ -75,7 +75,7 @@ cmake --build build-nocoreml -j 8 --config Release
 
 ### 2) Configuración de Ollama
 
-Este proyecto quedó configurado para usar Ollama con el modelo local:
+Este proyecto usa Ollama con un **modelo LLM principal configurable**. El valor inicial sale de `backend/.env`:
 
 - `gemma3:12b`
 
@@ -91,6 +91,7 @@ WHISPER_CHUNK_DURATION_SECONDS=90
 WHISPER_CPP_GLOSSARY=Japan, Yusuke, Taro, Kenji, karoshi, futoko, ijime, juku, shukatsu, naitei, ronin, konbini, pachinko, onigiri, Aokigahara
 WHISPER_DENOISE_FILTER=afftdn=nr=20:nf=-20:tn=1,highpass=f=120,lowpass=f=7000
 OLLAMA_BASE_URL=http://127.0.0.1:11434
+# Modelo default inicial. La UI puede persistir otro modelo activo en .runtime/model-selection.json.
 OLLAMA_MODEL=gemma3:12b
 OLLAMA_TIMEOUT_MS=300000
 OLLAMA_NUM_PARALLEL=1
@@ -132,6 +133,16 @@ Si querés levantar Ollama manualmente:
 ```bash
 ollama serve
 ```
+
+En la UI vas a ver un selector global dentro del panel **Runtime de IA**:
+
+- lista los modelos locales detectados desde `Ollama /api/tags`
+- permite cambiar solo el **LLM principal** para jobs futuros
+- persiste la selección en `.runtime/model-selection.json`
+- no toca el modelo de embeddings ni Whisper
+- si hay jobs IA activos, el cambio se bloquea hasta que el runtime quede libre
+
+Si el modelo persistido desaparece de Ollama, el backend intenta volver al `OLLAMA_MODEL` del `.env` y te muestra una advertencia.
 
 ### 3) Dependencias del backend
 
@@ -189,7 +200,7 @@ En el frontend también se visualiza el contenido de `full_study_notes_es.txt` c
 Cuando iniciás un job que usa IA:
 
 - el backend levanta Ollama on-demand
-- procesa con `gemma3:12b`
+- procesa con el modelo LLM activo configurado en la UI (o con el default del `.env` si nunca cambiaste la selección)
 - usa contexto separado para `full notes` y grounding
 - intenta reparar JSON localmente y con un contract repair antes de degradar una ventana
 - si no quedan jobs activos, el runtime entra en `idle`

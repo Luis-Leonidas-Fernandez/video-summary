@@ -90,7 +90,7 @@ export const appConfig = {
   whisperDenoiseFilter:
     process.env.WHISPER_DENOISE_FILTER ?? 'afftdn=nr=20:nf=-20:tn=1,highpass=f=120,lowpass=f=7000',
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL ?? 'http://127.0.0.1:11434',
-  ollamaModel: process.env.OLLAMA_MODEL ?? 'gemma3:12b',
+  defaultOllamaModel: process.env.OLLAMA_MODEL ?? 'gemma3:12b',
   ollamaTimeoutMs: Number(process.env.OLLAMA_TIMEOUT_MS ?? 3600000),
   ollamaNumParallel: Number(process.env.OLLAMA_NUM_PARALLEL ?? 1),
   ollamaMaxLoadedModels: Number(process.env.OLLAMA_MAX_LOADED_MODELS ?? 1),

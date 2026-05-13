@@ -10,3 +10,4 @@ output/*
 backend/.env
 .runtime/
 backend/grounding_worker/.venv/
+IMPROVEMENTS.md

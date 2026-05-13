@@ -205,6 +205,55 @@ label {
   color: #e2e8f0;
 }
 
+.model-selection-box {
+  margin-top: 1rem;
+  border-top: 1px solid #1e293b;
+  padding-top: 1rem;
+}
+
+.model-selection-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.field-label {
+  display: inline-block;
+  margin-bottom: 0.35rem;
+  color: #cbd5e1;
+  font-weight: 600;
+}
+
+.model-selection-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  color: #94a3b8;
+  font-size: 0.9rem;
+}
+
+.runtime-warning {
+  margin: 0.75rem 0 0;
+  border-radius: 0.75rem;
+  padding: 0.85rem 1rem;
+  background: rgba(59, 130, 246, 0.12);
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  color: #dbeafe;
+}
+
+.runtime-warning-error {
+  background: rgba(127, 29, 29, 0.35);
+  border-color: rgba(248, 113, 113, 0.45);
+  color: #fecaca;
+}
+
+.runtime-warning-caution {
+  background: rgba(180, 83, 9, 0.18);
+  border-color: rgba(251, 191, 36, 0.45);
+  color: #fde68a;
+}
+
 .resource-panel {
   border: 2px solid #f59e0b;
   background: linear-gradient(180deg, rgba(120, 53, 15, 0.35) 0%, rgba(15, 23, 42, 0.95) 100%);

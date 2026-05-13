@@ -3,6 +3,7 @@ import { jobLog } from '../utils/jobContext.js'
 import { aiRuntimeManager } from './aiRuntimeManager.js'
 import { getActiveTrace } from './opikTracer.js'
 import type { JsonSchemaObject } from './outputSchemas.js'
+import { modelSelectionService } from './modelSelectionService.js'
 
 interface OllamaChatResponse {
   message?: {
@@ -185,6 +186,11 @@ async function runOllamaChat({
 }): Promise<string> {
     await aiRuntimeManager.ensureReady()
     aiRuntimeManager.markActivity()
+    const activeModelState = await modelSelectionService.getActiveModelState()
+    if (!activeModelState.activeModelAvailable) {
+      throw new Error(`No hay un modelo Ollama activo disponible. Modelo seleccionado: ${activeModelState.activeModel}.`)
+    }
+    const activeModel = activeModelState.activeModel
 
     const controller = aiRuntimeManager.createRequestController()
     const timeout = setTimeout(() => controller.abort(), appConfig.ollamaTimeoutMs)
@@ -202,7 +208,7 @@ async function runOllamaChat({
         ]
 
     const requestBody: Record<string, unknown> = {
-      model: appConfig.ollamaModel,
+      model: activeModel,
       stream: false,
       keep_alive: profile?.keepAlive ?? appConfig.ollamaKeepAlive,
       messages,
@@ -221,7 +227,7 @@ async function runOllamaChat({
       requestBody.format = responseFormat
     }
 
-    if (supportsThinkingToggle(appConfig.ollamaModel)) {
+    if (supportsThinkingToggle(activeModel)) {
       requestBody.think = false
     }
 
@@ -229,7 +235,7 @@ async function runOllamaChat({
     const llmSpan = activeTrace?.span({
       name: 'ollama.completion',
       type: 'llm',
-      model: appConfig.ollamaModel,
+      model: activeModel,
       provider: 'ollama',
       input: {
         system,

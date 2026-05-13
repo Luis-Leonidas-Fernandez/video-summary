@@ -64,6 +64,16 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const previousStatusRef = useRef<JobResponse['status'] | null>(null);
 
+  const refreshHealth = async (): Promise<void> => {
+    try {
+      const nextHealth = await getHealth();
+      setHealth(nextHealth);
+      setHealthError(null);
+    } catch (nextError) {
+      setHealthError(nextError instanceof Error ? nextError.message : 'No se pudo consultar el runtime de IA.');
+    }
+  };
+
   useEffect(() => {
     const savedJobId = localStorage.getItem('lastJobId');
     if (!savedJobId) {
@@ -95,25 +105,23 @@ function App() {
   useEffect(() => {
     let cancelled = false;
 
-    const refreshHealth = async () => {
-      try {
-        const nextHealth = await getHealth();
-        if (cancelled) {
-          return;
-        }
-        setHealth(nextHealth);
-        setHealthError(null);
-      } catch (nextError) {
-        if (cancelled) {
-          return;
-        }
-        setHealthError(nextError instanceof Error ? nextError.message : 'No se pudo consultar el runtime de IA.');
-      }
-    };
-
     void refreshHealth();
     const intervalId = window.setInterval(() => {
-      void refreshHealth();
+      void (async () => {
+        try {
+          const nextHealth = await getHealth();
+          if (cancelled) {
+            return;
+          }
+          setHealth(nextHealth);
+          setHealthError(null);
+        } catch (nextError) {
+          if (cancelled) {
+            return;
+          }
+          setHealthError(nextError instanceof Error ? nextError.message : 'No se pudo consultar el runtime de IA.');
+        }
+      })();
     }, 5000);
 
     return () => {
@@ -351,7 +359,7 @@ function App() {
         <JobStatus job={job} error={error} onCancel={handleCancelPipeline} isCancelling={isCancelling} onReprocess={handleReprocess} isReprocessing={isReprocessing} />
       </div>
 
-      <AiRuntimeBanner health={health} error={healthError} />
+      <AiRuntimeBanner health={health} error={healthError} onRefreshHealth={refreshHealth} />
       <JobResourceUsagePanel resourceUsage={job?.resourceUsage} />
 
       <section className="panel">

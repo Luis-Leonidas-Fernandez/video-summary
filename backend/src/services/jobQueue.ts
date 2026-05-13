@@ -4,6 +4,7 @@ import { outputRoot, ensureDir, listJobFiles, writeJson, cloneTranscriptionArtif
 import { withJobContext, jobLog } from '../utils/jobContext.js';
 import { jobRequiresAi, runWithAiRuntime } from './aiJobRuntime.js';
 import { aiRuntimeManager } from './aiRuntimeManager.js';
+import { modelSelectionService } from './modelSelectionService.js';
 import { processVideoJob } from './videoProcessor.js';
 import type { CreateJobInput, JobFileEntry, JobRecord, JobResponse, JobStatus } from '../types.js';
 
@@ -144,7 +145,12 @@ class JobQueue {
 
     try {
       await withJobContext(job.id, async () => {
-        jobLog(`[job-start] url=${job.url} language=${job.language} generateTranscription=${job.generateTranscription} generateTranslation=${job.generateTranslation} generateSummary=${job.generateSummary} reusedFromJobId=${job.reusedFromJobId ?? 'none'}`);
+        if (job.generateSummary) {
+          job.modelMetadata = await modelSelectionService.getFrozenJobModelMetadata();
+          job.updatedAt = new Date().toISOString();
+          await this.persistJob(job);
+        }
+        jobLog(`[job-start] url=${job.url} language=${job.language} generateTranscription=${job.generateTranscription} generateTranslation=${job.generateTranslation} generateSummary=${job.generateSummary} reusedFromJobId=${job.reusedFromJobId ?? 'none'} ollamaModelUsed=${job.modelMetadata?.ollamaModelUsed ?? 'n/a'} modelSelectionSource=${job.modelMetadata?.modelSelectionSource ?? 'n/a'}`);
         await runWithAiRuntime(jobRequiresAi(job.generateSummary), async () =>
           processVideoJob(job, {
           updateStatus: async (status) => {
@@ -257,6 +263,7 @@ export function serializeJob(job: JobRecord, tail = DEFAULT_LOG_TAIL): JobRespon
     logCount: job.logs.length,
     logsTruncated: job.logs.length > logs.length,
     resourceUsage: job.resourceUsage,
+    modelMetadata: job.modelMetadata,
     error: job.error,
   };
 }

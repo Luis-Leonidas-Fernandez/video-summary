@@ -41,6 +41,13 @@ export interface JobResourceUsage {
   monitoringError?: string;
 }
 
+export type ModelSelectionSource = 'runtime_state' | 'env';
+
+export interface JobModelMetadata {
+  ollamaModelUsed: string;
+  modelSelectionSource: ModelSelectionSource;
+}
+
 export interface JobRecord {
   id: string;
   createdAt: string;
@@ -57,6 +64,7 @@ export interface JobRecord {
   files: JobFileEntry[];
   logs: string[];
   resourceUsage?: JobResourceUsage;
+  modelMetadata?: JobModelMetadata;
   error?: string;
 }
 
@@ -78,6 +86,7 @@ export interface JobResponse {
   logCount: number;
   logsTruncated: boolean;
   resourceUsage?: JobResourceUsage;
+  modelMetadata?: JobModelMetadata;
   error?: string;
   progress?: number;
 }
@@ -99,10 +108,29 @@ export type AiRuntimeStatus =
   | 'stopping'
   | 'error';
 
+export interface LocalModelInfo {
+  name: string;
+  digest?: string;
+  size?: number;
+  modifiedAt?: string;
+  family?: 'llm' | 'embedding' | 'unknown';
+  selectable: boolean;
+  unselectableReason?: 'embedding_model' | 'unknown_family';
+}
+
+export interface ModelSelectionResponse {
+  activeModel: string;
+  defaultModel: string;
+  source: ModelSelectionSource;
+  activeModelAvailable: boolean;
+  availableModels: LocalModelInfo[];
+  warning?: string;
+}
+
 export interface HealthResponse {
   ok: true;
   ollamaBaseUrl: string;
-  ollamaModel: 'gemma3:12b';
+  ollamaModel: string;
   aiRuntime: AiRuntimeStatus;
   ownedByCurrentSession: boolean;
   activeJobsCount: number;

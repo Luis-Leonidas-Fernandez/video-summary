@@ -4,6 +4,7 @@ import { appConfig } from '../config.js'
 import { checkCommandAvailable, runCommand } from '../utils/shell.js'
 import type { WorkerGroundingReport } from './groundingTypes.js'
 import { aiRuntimeManager } from './aiRuntimeManager.js'
+import { modelSelectionService } from './modelSelectionService.js'
 
 async function ensureGroundingRuntimeAvailable(): Promise<void> {
   const pythonAvailable = await checkCommandAvailable(appConfig.groundingPythonBin)
@@ -35,6 +36,10 @@ export async function generateGroundingReport({
   await ensureGroundingRuntimeAvailable()
   await aiRuntimeManager.ensureReady()
   aiRuntimeManager.markActivity()
+  const activeModelState = await modelSelectionService.getActiveModelState()
+  if (!activeModelState.activeModelAvailable) {
+    throw new Error(`No hay un modelo Ollama activo disponible para grounding. Modelo seleccionado: ${activeModelState.activeModel}.`)
+  }
 
   const reportPath = path.join(outputDir, 'grounding_worker_report.json')
   const args = [
@@ -49,7 +54,7 @@ export async function generateGroundingReport({
     '--ollama-base-url',
     appConfig.ollamaBaseUrl,
     '--ollama-llm-model',
-    appConfig.ollamaModel,
+    activeModelState.activeModel,
     '--ollama-embed-model',
     appConfig.groundingOllamaEmbedModel,
     '--ollama-num-ctx',

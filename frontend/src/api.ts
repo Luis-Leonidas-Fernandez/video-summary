@@ -41,6 +41,13 @@ export interface JobResourceUsage {
   monitoringError?: string;
 }
 
+export type ModelSelectionSource = 'runtime_state' | 'env';
+
+export interface JobModelMetadata {
+  ollamaModelUsed: string;
+  modelSelectionSource: ModelSelectionSource;
+}
+
 export interface JobResponse {
   id: string;
   createdAt: string;
@@ -59,8 +66,28 @@ export interface JobResponse {
   logCount: number;
   logsTruncated: boolean;
   resourceUsage?: JobResourceUsage;
+  modelMetadata?: JobModelMetadata;
   error?: string;
   progress?: number;
+}
+
+export interface LocalModelInfo {
+  name: string;
+  digest?: string;
+  size?: number;
+  modifiedAt?: string;
+  family?: 'llm' | 'embedding' | 'unknown';
+  selectable: boolean;
+  unselectableReason?: 'embedding_model' | 'unknown_family';
+}
+
+export interface ModelSelectionResponse {
+  activeModel: string;
+  defaultModel: string;
+  source: ModelSelectionSource;
+  activeModelAvailable: boolean;
+  availableModels: LocalModelInfo[];
+  warning?: string;
 }
 
 export interface ValidationReportPart {
@@ -247,7 +274,7 @@ export type AiRuntimeStatus =
 export interface HealthResponse {
   ok: true;
   ollamaBaseUrl: string;
-  ollamaModel: 'gemma3:12b';
+  ollamaModel: string;
   aiRuntime: AiRuntimeStatus;
   ownedByCurrentSession: boolean;
   activeJobsCount: number;
@@ -301,6 +328,28 @@ export async function getJobFileContent(jobId: string, fileName: string): Promis
 export async function getHealth(): Promise<HealthResponse> {
   const response = await fetch('/api/health');
   return parseJson<HealthResponse>(response);
+}
+
+export async function getModelSelection(): Promise<ModelSelectionResponse> {
+  const response = await fetch('/api/model-selection');
+  return parseJson<ModelSelectionResponse>(response);
+}
+
+export async function getModels(): Promise<LocalModelInfo[]> {
+  const response = await fetch('/api/models');
+  return parseJson<LocalModelInfo[]>(response);
+}
+
+export async function updateModelSelection(model: string): Promise<ModelSelectionResponse> {
+  const response = await fetch('/api/model-selection', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ model }),
+  });
+
+  return parseJson<ModelSelectionResponse>(response);
 }
 
 export async function cancelJob(jobId: string): Promise<JobResponse> {

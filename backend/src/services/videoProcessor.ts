@@ -84,6 +84,7 @@ export async function validateDependencies(): Promise<void> {
 
 export async function processVideoJob(job: JobRecord, hooks: ProcessJobHooks, signal?: AbortSignal): Promise<void> {
   await ensureDir(job.outputDir);
+  const activeLlmModel = job.modelMetadata?.ollamaModelUsed ?? appConfig.defaultOllamaModel;
   const logFilePath = path.join(job.outputDir, 'logs.txt');
   const resourceStagesPath = path.join(job.outputDir, 'resource_stages.jsonl');
   const resourceMonitor = createJobResourceMonitor({
@@ -92,7 +93,7 @@ export async function processVideoJob(job: JobRecord, hooks: ProcessJobHooks, si
 
   const opikTrace = opik.trace({
     name: 'video.pipeline',
-    input: { jobId: job.id, url: job.url, model: appConfig.ollamaModel },
+    input: { jobId: job.id, url: job.url, model: activeLlmModel },
   });
   setActiveTrace(opikTrace);
 
@@ -182,7 +183,7 @@ export async function processVideoJob(job: JobRecord, hooks: ProcessJobHooks, si
 
     if (job.generateSummary) {
       await hooks.updateStatus('summarizing');
-      await log(`Generando material de estudio exhaustivo con Ollama (${appConfig.ollamaModel}).`);
+      await log(`Generando material de estudio exhaustivo con Ollama (${activeLlmModel}).`);
       await log(
         `Perfil Ollama full notes: num_ctx=${appConfig.fullNotesOllamaNumCtx}, num_predict=${appConfig.fullNotesOllamaNumPredict}, keep_alive=${appConfig.ollamaKeepAlive}.`,
       );

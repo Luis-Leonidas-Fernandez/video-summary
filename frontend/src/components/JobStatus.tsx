@@ -77,6 +77,12 @@ export function JobStatus({ job, error, onCancel, isCancelling, onReprocess, isR
             <strong>Output</strong>
             <p>{job.outputDir}</p>
           </div>
+          {job.modelMetadata ? (
+            <div>
+              <strong>Modelo usado</strong>
+              <p>{job.modelMetadata.ollamaModelUsed} ({job.modelMetadata.modelSelectionSource === 'runtime_state' ? 'selección persistida' : 'default .env'})</p>
+            </div>
+          ) : null}
           {job.reusedFromJobId ? (
             <div>
               <strong>Reutilizó transcripción de</strong>

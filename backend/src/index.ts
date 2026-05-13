@@ -9,15 +9,18 @@ import cors from 'cors';
 import express from 'express';
 import { appConfig } from './config.js';
 import { jobsRouter } from './routes/jobs.routes.js';
+import { modelSelectionRouter } from './routes/modelSelection.routes.js';
 import { jobQueue } from './services/jobQueue.js';
 import { aiRuntimeManager } from './services/aiRuntimeManager.js';
 import { getHealthResponse } from './services/healthResponse.js';
+import { modelSelectionService } from './services/modelSelectionService.js';
 import { ensureDir, outputRoot } from './utils/files.js';
 
 const app = express();
 
 await ensureDir(outputRoot);
 await jobQueue.loadJobsFromDisk();
+await modelSelectionService.initialize();
 
 app.use(cors());
 app.use(express.json());
@@ -26,6 +29,7 @@ app.get('/api/health', async (_req, res) => {
   res.json(await getHealthResponse());
 });
 
+app.use('/api', modelSelectionRouter);
 app.use('/api/jobs', jobsRouter);
 
 const server = app.listen(appConfig.port, () => {

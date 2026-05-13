@@ -3,6 +3,7 @@ import { appConfig } from '../config.js';
 import { checkCommandAvailable } from '../utils/shell.js';
 import type { AiRuntimeStatus } from '../types.js';
 import { updateRuntimeSessionState } from './runtimeSessionState.js';
+import { modelSelectionService } from './modelSelectionService.js';
 
 const OLLAMA_TAGS_URL = `${appConfig.ollamaBaseUrl}/api/tags`;
 const OLLAMA_GENERATE_URL = `${appConfig.ollamaBaseUrl}/api/generate`;
@@ -149,12 +150,12 @@ class AiRuntimeManager {
     }
   }
 
-  async unloadModel(): Promise<void> {
+  async unloadModel(modelName?: string): Promise<void> {
     if (!this.ownedByCurrentSession) {
       return;
     }
 
-    await this.forceUnloadModel();
+    await this.forceUnloadModel(modelName);
   }
 
   createRequestController(): AbortController {
@@ -189,12 +190,14 @@ class AiRuntimeManager {
     this.activeRequestControllers.clear();
   }
 
-  private async forceUnloadModel(): Promise<void> {
+  private async forceUnloadModel(modelName?: string): Promise<void> {
     this.abortActiveRequests();
 
     if (!(await isOllamaReachable())) {
       return;
     }
+
+    const resolvedModelName = modelName ?? (await modelSelectionService.getActiveModelState()).activeModel;
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), OLLAMA_STARTUP_TIMEOUT_MS);
@@ -206,7 +209,7 @@ class AiRuntimeManager {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: appConfig.ollamaModel,
+          model: resolvedModelName,
           prompt: '',
           keep_alive: 0,
         }),
