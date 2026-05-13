@@ -6,6 +6,8 @@
     "dev": "node ./scripts/dev.mjs",
     "dev:backend": "npm --prefix backend run dev",
     "dev:frontend": "npm --prefix frontend run dev",
-    "install:all": "npm --prefix backend install && npm --prefix frontend install"
+    "install:all": "npm --prefix backend install && npm --prefix frontend install",
+    "cleanup": "node ./scripts/cleanup.mjs",
+    "cleanup:all": "node ./scripts/cleanup.mjs --include-ollama"
   }
 }

@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './styles.css';
 import {
+  cancelJob,
   createJob,
+  getHealth,
+  type GroundingReport,
+  type HealthResponse,
   getJob,
   getJobFileContent,
   getJobFiles,
@@ -11,12 +15,25 @@ import {
   type ValidationReport,
 } from './api';
 import { FileList } from './components/FileList';
+import { AiRuntimeBanner } from './components/AiRuntimeBanner';
+import { GroundingSummary } from './components/GroundingSummary';
 import { JobForm } from './components/JobForm';
+import { JobResourceUsagePanel } from './components/JobResourceUsagePanel';
 import { JobStatus } from './components/JobStatus';
 import { SummaryPreview } from './components/SummaryPreview';
 import { ValidationSummary } from './components/ValidationSummary';
 
-const TERMINAL_STATUSES = new Set(['completed', 'failed']);
+const TERMINAL_STATUSES = new Set(['completed', 'completed_with_warnings', 'failed', 'cancelled']);
+const TERMINAL_SUCCESS_STATUSES = new Set(['completed', 'completed_with_warnings']);
+
+function isUsableGroundingReport(value: unknown): value is GroundingReport {
+  if (!value || typeof value !== 'object' || !('parts' in value)) {
+    return false;
+  }
+
+  const parts = (value as { parts?: unknown }).parts;
+  return Array.isArray(parts) && parts.length > 0;
+}
 
 function getPollingInterval(status: JobResponse['status'] | undefined): number | null {
   if (!status || TERMINAL_STATUSES.has(status)) {
@@ -34,13 +51,76 @@ function App() {
   const [job, setJob] = useState<JobResponse | null>(null);
   const [files, setFiles] = useState<JobFile[]>([]);
   const [summaryContent, setSummaryContent] = useState<string | null>(null);
+  const [groundingReport, setGroundingReport] = useState<GroundingReport | null>(null);
   const [validationReport, setValidationReport] = useState<ValidationReport | null>(null);
   const [isSummaryLoading, setIsSummaryLoading] = useState(false);
   const [isValidationLoading, setIsValidationLoading] = useState(false);
+  const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCancelling, setIsCancelling] = useState(false);
+  const [isReprocessing, setIsReprocessing] = useState(false);
   const [areLogsCollapsed, setAreLogsCollapsed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const previousStatusRef = useRef<JobResponse['status'] | null>(null);
+
+  useEffect(() => {
+    const savedJobId = localStorage.getItem('lastJobId');
+    if (!savedJobId) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const restored = await getJob(savedJobId);
+        setJob(restored);
+        setFiles(restored.files);
+
+        if (new Set(['completed', 'completed_with_warnings']).has(restored.status)) {
+          setAreLogsCollapsed(true);
+          if (restored.generateSummary) {
+            await Promise.all([
+              loadSummaryPreview(restored.id),
+              loadReviewReports(restored.id),
+            ]);
+          }
+        }
+      } catch {
+        localStorage.removeItem('lastJobId');
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const refreshHealth = async () => {
+      try {
+        const nextHealth = await getHealth();
+        if (cancelled) {
+          return;
+        }
+        setHealth(nextHealth);
+        setHealthError(null);
+      } catch (nextError) {
+        if (cancelled) {
+          return;
+        }
+        setHealthError(nextError instanceof Error ? nextError.message : 'No se pudo consultar el runtime de IA.');
+      }
+    };
+
+    void refreshHealth();
+    const intervalId = window.setInterval(() => {
+      void refreshHealth();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, []);
 
   const loadSummaryPreview = async (jobId: string) => {
     setIsSummaryLoading(true);
@@ -63,14 +143,27 @@ function App() {
     }
   };
 
-  const loadValidationReport = async (jobId: string) => {
+  const loadReviewReports = async (jobId: string) => {
     setIsValidationLoading(true);
 
     try {
-      const raw = await getJobFileContent(jobId, 'validation_report.json');
-      const parsed = JSON.parse(raw) as ValidationReport;
-      setValidationReport(parsed);
+      try {
+        const rawGrounding = await getJobFileContent(jobId, 'grounding_report.json');
+        const parsedGrounding = JSON.parse(rawGrounding) as unknown;
+        setGroundingReport(isUsableGroundingReport(parsedGrounding) ? parsedGrounding : null);
+      } catch {
+        setGroundingReport(null);
+      }
+
+      try {
+        const rawValidation = await getJobFileContent(jobId, 'validation_report.json');
+        const parsedValidation = JSON.parse(rawValidation) as ValidationReport;
+        setValidationReport(parsedValidation);
+      } catch {
+        setValidationReport(null);
+      }
     } catch {
+      setGroundingReport(null);
       setValidationReport(null);
     } finally {
       setIsValidationLoading(false);
@@ -108,11 +201,14 @@ function App() {
     const previousStatus = previousStatusRef.current;
     previousStatusRef.current = job.status;
 
-    if (job.status === 'completed') {
+    if (TERMINAL_SUCCESS_STATUSES.has(job.status)) {
       setAreLogsCollapsed(true);
     }
 
-    if (job.status !== 'completed' || previousStatus === 'completed') {
+    if (
+      !TERMINAL_SUCCESS_STATUSES.has(job.status)
+      || (previousStatus != null && TERMINAL_SUCCESS_STATUSES.has(previousStatus))
+    ) {
       return;
     }
 
@@ -124,7 +220,7 @@ function App() {
         if (job.generateSummary) {
           await Promise.all([
             loadSummaryPreview(job.id),
-            loadValidationReport(job.id),
+            loadReviewReports(job.id),
           ]);
         }
       } catch (refreshError) {
@@ -138,6 +234,7 @@ function App() {
     setError(null);
     setFiles([]);
     setSummaryContent(null);
+    setGroundingReport(null);
     setValidationReport(null);
     setIsSummaryLoading(false);
     setIsValidationLoading(false);
@@ -146,12 +243,13 @@ function App() {
 
     try {
       const created = await createJob(payload);
+      localStorage.setItem('lastJobId', created.id);
       setJob(created);
       setFiles(created.files);
-      if (created.generateSummary && TERMINAL_STATUSES.has(created.status)) {
+      if (created.generateSummary && TERMINAL_SUCCESS_STATUSES.has(created.status)) {
         await Promise.all([
           loadSummaryPreview(created.id),
-          loadValidationReport(created.id),
+          loadReviewReports(created.id),
         ]);
       }
     } catch (submitError) {
@@ -159,6 +257,63 @@ function App() {
       setJob(null);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleReprocess = async () => {
+    if (!job || isReprocessing) {
+      return;
+    }
+
+    setIsReprocessing(true);
+    setError(null);
+    setFiles([]);
+    setSummaryContent(null);
+    setGroundingReport(null);
+    setValidationReport(null);
+    setIsSummaryLoading(false);
+    setIsValidationLoading(false);
+    setAreLogsCollapsed(false);
+    previousStatusRef.current = null;
+
+    try {
+      const created = await createJob({
+        url: job.url,
+        language: job.language,
+        generateTranscription: job.generateTranscription,
+        generateTranslation: job.generateTranslation,
+        generateSummary: job.generateSummary,
+        speakerCountHint: job.speakerCountHint,
+        reuseFromJobId: job.id,
+      });
+      localStorage.setItem('lastJobId', created.id);
+      setJob(created);
+      setFiles(created.files);
+    } catch (reprocessError) {
+      setError(reprocessError instanceof Error ? reprocessError.message : 'No se pudo reprocesar el job.');
+    } finally {
+      setIsReprocessing(false);
+    }
+  };
+
+  const handleCancelPipeline = async () => {
+    if (!job || TERMINAL_STATUSES.has(job.status) || job.status === 'cancelling') {
+      return;
+    }
+
+    setIsCancelling(true);
+    setError(null);
+
+    try {
+      const cancelledJob = await cancelJob(job.id);
+      setJob(cancelledJob);
+      const nextHealth = await getHealth();
+      setHealth(nextHealth);
+      setHealthError(null);
+    } catch (cancelError) {
+      setError(cancelError instanceof Error ? cancelError.message : 'No se pudo cancelar el pipeline.');
+    } finally {
+      setIsCancelling(false);
     }
   };
 
@@ -193,8 +348,11 @@ function App() {
 
       <div className="layout-grid">
         <JobForm isSubmitting={isSubmitting} onSubmit={handleSubmit} />
-        <JobStatus job={job} error={error} />
+        <JobStatus job={job} error={error} onCancel={handleCancelPipeline} isCancelling={isCancelling} onReprocess={handleReprocess} isReprocessing={isReprocessing} />
       </div>
+
+      <AiRuntimeBanner health={health} error={healthError} />
+      <JobResourceUsagePanel resourceUsage={job?.resourceUsage} />
 
       <section className="panel">
         <div className="panel-header">
@@ -213,8 +371,14 @@ function App() {
         ) : null}
       </section>
 
+      <GroundingSummary
+        report={groundingReport}
+        files={files.length > 0 ? files : job?.files ?? []}
+        isLoading={isValidationLoading}
+      />
+
       <ValidationSummary
-        report={validationReport}
+        report={groundingReport ? null : validationReport}
         files={files.length > 0 ? files : job?.files ?? []}
         isLoading={isValidationLoading}
       />

@@ -1,19 +1,10 @@
 import { spawn } from 'node:child_process';
+import { cleanupRuntime, persistDevState } from './runtime-control.mjs';
 
-const OLLAMA_URL = 'http://127.0.0.1:11434/api/tags';
 const children = [];
 
 function log(message) {
   console.log(`[video-study-tool] ${message}`);
-}
-
-async function isOllamaRunning() {
-  try {
-    const response = await fetch(OLLAMA_URL);
-    return response.ok;
-  } catch {
-    return false;
-  }
 }
 
 function spawnManagedProcess(name, command, args, options = {}) {
@@ -61,21 +52,20 @@ function shutdown(exitCode = 0) {
     child.kill('SIGTERM');
   }
 
-  setTimeout(() => process.exit(exitCode), 250);
+  setTimeout(() => {
+    cleanupRuntime({
+      includeOllama: false,
+      logger: (message) => log(`cleanup: ${message}`),
+    });
+    process.exit(exitCode);
+  }, 250);
 }
 
 process.on('SIGINT', () => shutdown(0));
 process.on('SIGTERM', () => shutdown(0));
 
 async function main() {
-  const ollamaRunning = await isOllamaRunning();
-
-  if (ollamaRunning) {
-    log('Ollama ya está corriendo en http://127.0.0.1:11434.');
-  } else {
-    log('Ollama no estaba corriendo. Levantando `ollama serve`...');
-    spawnManagedProcess('ollama', 'ollama', ['serve']);
-  }
+  persistDevState({ ollamaStartedByDev: false, ollamaStartedByBackend: false });
 
   log('Levantando backend...');
   spawnManagedProcess('backend', 'npm', ['--prefix', 'backend', 'run', 'dev']);
