@@ -2,6 +2,10 @@
 
 App local para Mac que recibe una URL de YouTube, descarga el audio, transcribe localmente con `whisper.cpp`, permite forzar idioma manual, aplica denoise previo con `ffmpeg` y genera material de estudio exhaustivo con Ollama, guardando todos los artefactos en archivos dentro de `/output`.
 
+La validación nueva ya no depende principalmente de “unmatched labels”: ahora el backend genera **claims con citas a chunks** y corre un paso de **grounding** con LlamaIndex para medir qué afirmaciones están realmente respaldadas por la transcripción.
+
+Además, el pipeline ahora arma un **evidence pack cerrado** con aliases `[C1]`, `[C2]`, etc. El modelo nunca ve ids reales de chunks y primero pasa por una validación estricta de integridad de citas antes del grounding semántico.
+
 ## Stack
 
 - Frontend: React + Vite + TypeScript
@@ -18,6 +22,9 @@ App local para Mac que recibe una URL de YouTube, descarga el audio, transcribe 
 ```text
 video-summary/
   backend/
+    grounding_worker/
+      grounding_worker.py
+      requirements.txt
     src/
       index.ts
       routes/jobs.routes.ts
@@ -86,8 +93,38 @@ WHISPER_DENOISE_FILTER=afftdn=nr=20:nf=-20:tn=1,highpass=f=120,lowpass=f=7000
 OLLAMA_BASE_URL=http://127.0.0.1:11434
 OLLAMA_MODEL=gemma3:12b
 OLLAMA_TIMEOUT_MS=300000
-OLLAMA_NUM_PREDICT=1500
-OLLAMA_NUM_CTX=8192
+OLLAMA_NUM_PARALLEL=1
+OLLAMA_MAX_LOADED_MODELS=1
+OLLAMA_KEEP_ALIVE=2m
+OLLAMA_IDLE_SHUTDOWN_MS=30000
+FULL_NOTES_OLLAMA_NUM_PREDICT=700
+FULL_NOTES_OLLAMA_NUM_CTX=2048
+GROUNDING_OLLAMA_NUM_PREDICT=700
+GROUNDING_OLLAMA_NUM_CTX=4096
+# Legacy fallback temporal si todavía no migraste:
+# OLLAMA_NUM_PREDICT=700
+# OLLAMA_NUM_CTX=2048
+GROUNDING_MODE=auto
+GROUNDING_PYTHON_BIN=/Users/luis/Desktop/video-summary/backend/grounding_worker/.venv/bin/python3
+GROUNDING_WORKER_PATH=/Users/luis/Desktop/video-summary/backend/grounding_worker/grounding_worker.py
+GROUNDING_OLLAMA_EMBED_MODEL=embeddinggemma
+GROUNDING_TOP_K=5
+GROUNDING_MAX_CHARS_PER_CHUNK=1200
+GROUNDING_MAX_TOTAL_EVIDENCE_CHARS=6000
+GROUNDING_SUPPORTED_THRESHOLD=0.8
+GROUNDING_WEAK_THRESHOLD=0.6
+MAX_JSON_CONTRACT_REPAIR_ATTEMPTS=1
+MAX_STRICT_REEMIT_ATTEMPTS=1
+GENERATION_SCHEMA_MODE=simple_draft
+ENABLE_TWO_STEP_RECOVERY_FOR_GENERATION=true
+MAX_TWO_STEP_RECOVERY_ATTEMPTS=1
+ENABLE_SEMANTIC_ENRICHMENT=false
+MAX_SEMANTIC_ENRICHMENT_ATTEMPTS=1
+ENABLE_CHAIN_SEMANTIC_ENRICHMENT=true
+MAX_CHAIN_SEMANTIC_ENRICHMENT_ATTEMPTS=1
+ENABLE_THIN_REASONING_CHAIN=true
+ENABLE_CLOSURE_SANITIZER=true
+FALLBACK_MODE=editorial
 ```
 
 Si querés levantar Ollama manualmente:
@@ -103,14 +140,24 @@ cd /ruta/a/video-summary/backend
 npm install
 ```
 
-### 4) Dependencias del frontend
+### 4) Dependencias Python para grounding
+
+```bash
+cd /ruta/a/video-summary/backend/grounding_worker
+/opt/homebrew/bin/python3 -m venv .venv
+./.venv/bin/python3 -m pip install -r requirements.txt
+```
+
+> El worker debe correr dentro de su propio virtualenv. Con el Python del sistema (`/usr/bin/python3`, 3.9) LlamaIndex moderno puede romper por incompatibilidades, y Homebrew Python además está protegido por PEP 668 si intentás instalar globalmente. Si faltan dependencias, el job sigue con fallback legacy **solo si** `GROUNDING_MODE=auto`. Si ponés `GROUNDING_MODE=required`, el grounding pasa a ser obligatorio.
+
+### 5) Dependencias del frontend
 
 ```bash
 cd /ruta/a/video-summary/frontend
 npm install
 ```
 
-### 5) Instalación rápida del workspace
+### 6) Instalación rápida del workspace
 
 ```bash
 cd /ruta/a/video-summary
@@ -128,14 +175,52 @@ npm run dev
 
 Ese comando:
 
-- levanta Ollama si todavía no está corriendo
 - levanta el backend
 - levanta el frontend
+- deja Ollama apagado hasta que una tarea de IA realmente lo necesite
+- guarda un estado runtime para poder limpiar procesos colgados después
+- cuando hacés `Ctrl + C`, además del shutdown normal ejecuta la misma limpieza de `npm run cleanup`
 
 Backend disponible en: [http://localhost:3001](http://localhost:3001)
 Frontend disponible en: [http://localhost:5173](http://localhost:5173)
 
 En el frontend también se visualiza el contenido de `full_study_notes_es.txt` con una presentación estructurada, además de dejar el archivo disponible para abrir o descargar.
+
+Cuando iniciás un job que usa IA:
+
+- el backend levanta Ollama on-demand
+- procesa con `gemma3:12b`
+- usa contexto separado para `full notes` y grounding
+- intenta reparar JSON localmente y con un contract repair antes de degradar una ventana
+- si no quedan jobs activos, el runtime entra en `idle`
+- al terminar un job IA, se fuerza descarga del modelo para liberar RAM
+- tras `OLLAMA_IDLE_SHUTDOWN_MS`, se apaga el runtime como respaldo si sigue siendo propiedad de esta sesión
+
+### Limpieza de procesos
+
+Si te queda la máquina pesada después de pruebas manuales, grounding o un backend temporal:
+
+```bash
+cd /ruta/a/video-summary
+npm run cleanup
+```
+
+Ese script:
+
+- mata workers de grounding del proyecto
+- mata backends locales escuchando en `3001` y `3002`
+- apaga Ollama **solo si** esta sesión de `npm run dev` lo había levantado automáticamente
+
+Si querés forzar además el apagado de Ollama aunque no haya quedado marcado como iniciado por `npm run dev`:
+
+```bash
+npm run cleanup:all
+```
+
+Tradeoff:
+
+- `cleanup` es más seguro si usás Ollama para otras cosas
+- `cleanup:all` libera más memoria, pero te baja todo el runtime local de Ollama
 
 ### Comandos individuales
 
@@ -156,10 +241,12 @@ npm run dev:frontend
 7. `whisper.cpp` transcribe subchunk por subchunk, usando el idioma manual si lo cargás y un prompt con glosario.
 8. El backend fusiona los subchunks en `transcription_part_XXX.txt` y luego consolida todas las partes en `transcription.txt`.
 9. Si activás traducción, se crea `translation_es.txt` como placeholder.
-10. Si activás resumen, Ollama genera una extracción exhaustiva explicativa por parte (`extraction_part_XXX.txt`) y luego consolida todo en `full_study_notes_es.txt`.
-11. Cada extracción parcial se valida para detectar deriva, listas artificiales y reparaciones; el resultado queda en `validation_report.json`.
-12. También se generan artefactos de estudio derivados: `outline_es.txt`, `key_concepts_es.txt`, `questions_es.txt` y `glossary_es.txt`.
-13. Todos los logs del proceso se escriben también en `logs.txt`.
+10. Si activás resumen, Ollama genera una extracción exhaustiva explicativa por parte (`extraction_part_XXX.txt`) **con citas a chunks** y luego consolida todo en `full_study_notes_es.txt`.
+11. El backend extrae claims estructurados por parte (`claims_part_XXX.json`) y genera además un `chunk_manifest.json`.
+12. Un worker Python con LlamaIndex valida esos claims contra los chunks fuente y produce `grounding_report.json`.
+13. Se mantiene `validation_report.json` como fallback legacy para compatibilidad y debugging.
+14. También se generan artefactos de estudio derivados: `outline_es.txt`, `key_concepts_es.txt`, `questions_es.txt` y `glossary_es.txt`.
+15. Todos los logs del proceso se escriben también en `logs.txt`.
 
 ## Endpoints
 
@@ -192,7 +279,18 @@ Devuelve el estado actual del job:
 - `completed`
 - `failed`
 
-Además incluye logs, archivos detectados y error si aplica.
+Además incluye:
+
+- estado del job
+- archivos detectados
+- `logs` truncados a las últimas líneas
+- `logCount`
+- `logsTruncated`
+- error si aplica
+
+Para inspección adicional de logs existe también:
+
+- `GET /api/jobs/:id/logs?tail=200`
 
 ### `GET /api/jobs/:id/files`
 
@@ -214,10 +312,13 @@ output/
     transcription_part_001.txt
     extraction_part_001.txt
     transcription.txt
+    chunk_manifest.json
+    claims_part_001.json
     full_study_notes_es.txt
     translation_es.txt
     summary_es.txt
     validation_report.json
+    grounding_report.json
     outline_es.txt
     key_concepts_es.txt
     questions_es.txt
@@ -233,7 +334,8 @@ output/
 - **Transcripción local optimizada para Mac**: se usa `whisper.cpp` con `whisper-cli`, modelo `large-v3`, prompt con glosario y denoise previo en `ffmpeg`.
 - **Procesamiento jerárquico**: primero parte el video en bloques de 30 minutos y recién después transcribe cada parte en subchunks más chicos.
 - **Extracción exhaustiva local con Ollama**: se generan `extraction_part_XXX.txt` con formato explicativo por temas y luego se consolidan en `full_study_notes_es.txt`.
-- **Validación heurística por parte**: cada extracción parcial se audita con warnings, flags fuertes y reporte global en `validation_report.json`.
+- **Grounding por claims con citas**: cada extracción parcial genera claims estructurados y se valida contra chunks reales de la transcripción usando LlamaIndex; el resultado principal queda en `grounding_report.json`.
+- **Fallback legacy**: el viejo `validation_report.json` sigue existiendo como red de seguridad y compatibilidad temporal.
 - **Traducción placeholder**: `translateToSpanish()` sigue siendo un placeholder hasta que decidas integrarla también con Ollama.
 
 ## Archivos clave
@@ -243,6 +345,12 @@ output/
   - `generateStudyOutputs()`
 - `backend/src/services/ollamaClient.ts`
   - `generateSpanishSummary()`
+- `backend/src/services/claimExtraction.ts`
+  - `extractClaimsFromStudyNotes()`
+- `backend/src/services/groundingService.ts`
+  - `generateGroundingReport()`
+- `backend/grounding_worker/grounding_worker.py`
+  - valida claims contra chunks con LlamaIndex
 - `backend/src/services/videoPartitioner.ts`
   - `partitionVideoAudio()`
 - `backend/src/services/studyExtraction.ts`
@@ -288,3 +396,4 @@ async function translateToSpanish(outputDir: string, transcriptionPath: string):
 2. Agregar cancelación de jobs.
 3. Recuperar jobs desde `job.json` al reiniciar.
 4. Mejorar streaming de progreso al frontend con SSE o WebSockets.
+5. Afinar thresholds de grounding y decisión por claim con casos reales.
