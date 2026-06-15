@@ -2,8 +2,9 @@ import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { opik, setActiveTrace, setActiveParentSpan } from './opikTracer.js';
 import { appConfig } from '../config.js';
+import { completeOllamaResponse } from './ollamaClient.js';
 import type { ChunkManifestChunk } from './groundingTypes.js';
-import type { JobResourceUsage } from '../types.js';
+import type { JobResourceUsage, JobStatus, TranslationStatus } from '../types.js';
 import {
   consolidateExtractions,
   generateExtractionForPart,
@@ -23,9 +24,9 @@ import { annotateChunkSpeakerAwareness, buildSpeakerAwarenessLogLine } from './s
 import { postprocessTranscription } from './transcriptionPostprocessor.js';
 import { partitionVideoAudio } from './videoPartitioner.js';
 import { transcribeAudio, validateWhisperCpp } from './whisperCpp.js';
-import { appendLine, ensureDir, listJobFiles, pathExists, readText, writeJson, writeText } from '../utils/files.js';
+import { appendLine, ensureDir, listJobFiles, pathExists, readText, writeJson, writeText, writeTextAtomic } from '../utils/files.js';
 import { checkCommandAvailable, runCommand } from '../utils/shell.js';
-import type { JobRecord, JobStatus } from '../types.js';
+import type { JobRecord } from '../types.js';
 
 interface ProcessJobHooks {
   updateStatus: (status: JobStatus) => Promise<void>;
@@ -38,6 +39,28 @@ interface ProcessJobHooks {
 
 const REQUIRED_COMMANDS = ['yt-dlp', 'ffmpeg'] as const;
 const MIN_VALID_ARTIFACT_LENGTH = 40;
+const SPANISH_STOPWORDS = new Set([
+  'el', 'la', 'los', 'las', 'de', 'del', 'que', 'y', 'en', 'por', 'para', 'con', 'una', 'un', 'como', 'se', 'al',
+  'pero', 'más', 'mas', 'esto', 'esta', 'este', 'porque', 'sobre', 'cuando', 'puede', 'puedes',
+]);
+const ENGLISH_STOPWORDS = new Set([
+  'the', 'and', 'of', 'to', 'is', 'in', 'for', 'with', 'you', 'this', 'that', 'from', 'are', 'your', 'will',
+  'can', 'use', 'look', 'please', 'while', 'now', 'how',
+]);
+
+interface SpanishOutputResolution {
+  detectedSourceLanguage: string
+  translationStatus: TranslationStatus
+  spanishTextPath: string
+}
+
+interface TranscriptionChunkArtifact {
+  partId: string
+  chunkOrder: number
+  transcriptionPath: string
+  translationPath: string
+  text: string
+}
 
 interface StudyPart {
   partNumber: number;
@@ -173,13 +196,10 @@ export async function processVideoJob(job: JobRecord, hooks: ProcessJobHooks, si
       await log('La opción de transcripción original fue desactivada. Se mantiene el archivo porque traducción/resumen dependen de la transcripción en este MVP.');
     }
 
-    if (job.generateTranslation) {
-      await hooks.updateStatus('translating');
-      await log('Generando placeholder de traducción al español.');
-      await translateToSpanish(job.outputDir, transcriptionPath);
-      await hooks.refreshFiles();
-      await persistJobFile();
-    }
+    const spanishOutput = await ensureSpanishReadableText(job, transcriptionPath, log, hooks)
+    job.detectedSourceLanguage = spanishOutput.detectedSourceLanguage
+    job.translationStatus = spanishOutput.translationStatus
+    await persistJobFile()
 
     if (job.generateSummary) {
       await hooks.updateStatus('summarizing');
@@ -193,7 +213,7 @@ export async function processVideoJob(job: JobRecord, hooks: ProcessJobHooks, si
         const studyOutputs = await generateStudyOutputs(
           job.id,
           job.outputDir,
-          transcriptionPath!,
+          spanishOutput.spanishTextPath,
           log,
           recordStageSnapshot,
           hooks.refreshFiles,
@@ -470,9 +490,9 @@ async function runTranscription(
     signal,
   });
   const languageLabel =
-    job.language.trim().toLowerCase() === 'auto' || job.language.trim() === ''
+    job.transcriptionLanguage.trim().toLowerCase() === 'auto' || job.transcriptionLanguage.trim() === ''
       ? 'detección automática de idioma'
-      : `idioma forzado: ${job.language.trim()}`;
+      : `idioma forzado: ${job.transcriptionLanguage.trim()}`;
   await log(`Transcribiendo audio con whisper.cpp (${languageLabel}) usando modelo ${path.basename(appConfig.whisperCppModelPath)}.`);
 
   const transcriptionPath = path.join(job.outputDir, 'transcription.txt');
@@ -500,17 +520,346 @@ async function runTranscription(
   return transcriptionPath;
 }
 
-export async function translateToSpanish(outputDir: string, transcriptionPath: string): Promise<void> {
-  const transcription = await readText(transcriptionPath);
-  const content = [
-    'PLACEHOLDER: traducción al español pendiente.',
-    'Conectá esta función a Ollama o a una API LLM en una próxima versión.',
-    '',
-    'Vista previa del texto fuente:',
-    transcription.slice(0, 2000),
-  ].join('\n');
+function normalizeLanguageLabel(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+}
 
-  await writeText(path.join(outputDir, 'translation_es.txt'), content);
+function isSpanishLanguage(value: string): boolean {
+  const normalized = normalizeLanguageLabel(value)
+  return normalized === 'es' || normalized === 'espanol' || normalized === 'spanish'
+}
+
+function detectSourceLanguageFromTranscription(transcription: string): string {
+  const normalized = transcription
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+  const words = normalized.match(/[a-zñ]{2,}/g) ?? []
+  const sample = words.slice(0, 400)
+
+  let spanishScore = 0
+  let englishScore = 0
+
+  for (const word of sample) {
+    if (SPANISH_STOPWORDS.has(word)) spanishScore += 1
+    if (ENGLISH_STOPWORDS.has(word)) englishScore += 1
+  }
+
+  const accentedHits = (transcription.match(/[áéíóúñ¿¡]/gi) ?? []).length
+  spanishScore += accentedHits * 2
+
+  if (spanishScore >= Math.max(englishScore * 1.35, 8)) {
+    return 'es'
+  }
+
+  if (englishScore >= Math.max(spanishScore * 1.35, 8)) {
+    return 'en'
+  }
+
+  return spanishScore > 0 && englishScore > 0 ? 'mixed' : 'unknown'
+}
+
+async function collectTranscriptionChunks(outputDir: string): Promise<TranscriptionChunkArtifact[]> {
+  const entries = await fs.readdir(outputDir).catch(() => []);
+  const chunks = await Promise.all(entries
+    .map(async (fileName) => {
+      const match = fileName.match(/^transcription_chunk_(\d{3})_(\d{3})\.txt$/)
+      if (!match?.[1] || !match[2]) {
+        return null
+      }
+
+      const transcriptionPath = path.join(outputDir, fileName)
+      const text = (await readText(transcriptionPath).catch(() => '')).trim()
+      if (!text) {
+        return null
+      }
+
+      const partId = match[1]
+      const chunkOrder = Number(match[2])
+      return {
+        partId,
+        chunkOrder,
+        transcriptionPath,
+        translationPath: path.join(outputDir, `translation_chunk_${partId}_${match[2]}.txt`),
+        text,
+      } satisfies TranscriptionChunkArtifact
+    }))
+
+  return chunks
+    .filter((value): value is TranscriptionChunkArtifact => Boolean(value))
+    .sort((left, right) => {
+      if (left.partId === right.partId) {
+        return left.chunkOrder - right.chunkOrder
+      }
+      return left.partId.localeCompare(right.partId)
+    })
+}
+
+async function isValidTranslationChunk(filePath: string): Promise<boolean> {
+  if (!(await pathExists(filePath))) {
+    return false
+  }
+
+  const stats = await fs.stat(filePath).catch(() => null)
+  if (!stats || stats.size === 0) {
+    return false
+  }
+
+  const content = await readText(filePath).catch(() => '')
+  return content.trim().length > 0
+}
+
+async function hasReusableTranslatedArtifacts(outputDir: string): Promise<boolean> {
+  const translationPath = path.join(outputDir, 'translation_es.txt')
+  if (!(await isValidArtifact(translationPath))) {
+    return false
+  }
+
+  const entries = await fs.readdir(outputDir).catch(() => [])
+  const transcriptionPartCount = entries.filter((fileName) => /^transcription_part_\d{3}\.txt$/.test(fileName)).length
+  const translationPartCount = entries.filter((fileName) => /^translation_part_\d{3}\.txt$/.test(fileName)).length
+  const transcriptionChunkCount = entries.filter((fileName) => /^transcription_chunk_\d{3}_\d{3}\.txt$/.test(fileName)).length
+  const translationChunkCount = entries.filter((fileName) => /^translation_chunk_\d{3}_\d{3}\.txt$/.test(fileName)).length
+
+  return translationPartCount > 0
+    && translationPartCount === transcriptionPartCount
+    && translationChunkCount > 0
+    && translationChunkCount === transcriptionChunkCount
+}
+
+async function translateChunkToSpanish({
+  chunkText,
+  sourceLanguage,
+}: {
+  chunkText: string
+  sourceLanguage?: string
+}): Promise<string> {
+  return completeOllamaResponse({
+    system: [
+      'Sos un traductor profesional de transcripciones.',
+      'Traducí al español claro el fragmento recibido.',
+      'No resumas, no expliques, no agregues contenido y no omitas detalles.',
+      'Conservá timestamps si existen.',
+      'Conservá etiquetas de hablante si existen.',
+      'Traducí solo el contenido hablado.',
+      'Mantené consistencia terminológica.',
+      'Conservá siglas técnicas conocidas cuando convenga.',
+      'No agregues prefacios como "Aquí está la traducción".',
+      'Devolvé solamente la traducción.',
+    ].join('\n'),
+    prompt: [
+      `Idioma fuente detectado o inferido: ${sourceLanguage ?? 'desconocido'}.`,
+      'Traducí al español el siguiente fragmento de transcripción:',
+      '',
+      chunkText,
+    ].join('\n'),
+    maxContinuations: 2,
+    profile: {
+      numCtx: appConfig.fullNotesOllamaNumCtx,
+      numPredict: appConfig.fullNotesOllamaNumPredict,
+      keepAlive: appConfig.ollamaKeepAlive,
+    },
+    responseFormat: 'text',
+    debugLabel: 'translation_chunk_to_spanish',
+  })
+}
+
+async function ensureTranslatedChunk({
+  chunk,
+  sourceLanguage,
+  log,
+}: {
+  chunk: TranscriptionChunkArtifact
+  sourceLanguage?: string
+  log: (message: string) => Promise<void>
+}): Promise<void> {
+  const tempTranslationPath = `${chunk.translationPath}.tmp`
+
+  if (await isValidTranslationChunk(chunk.translationPath)) {
+    await log(`Reutilizando chunk traducido existente ${path.basename(chunk.translationPath)}.`)
+    return
+  }
+
+  if (await pathExists(tempTranslationPath)) {
+    await fs.unlink(tempTranslationPath).catch(() => undefined)
+    await log(`Descartando chunk temporal incompleto ${path.basename(tempTranslationPath)} antes de retraducir.`)
+  }
+
+  await log(`Traduciendo chunk ${path.basename(chunk.transcriptionPath)} al español.`)
+  const translated = (await translateChunkToSpanish({
+    chunkText: chunk.text,
+    sourceLanguage,
+  })).trim()
+
+  if (!translated) {
+    throw new Error(`Empty translation chunk: ${path.basename(chunk.translationPath)}`)
+  }
+
+  await writeTextAtomic(chunk.translationPath, `${translated}\n`)
+  await log(`Chunk traducido guardado en ${path.basename(chunk.translationPath)}.`)
+}
+
+async function consolidateTranslationParts(
+  outputDir: string,
+  chunks: TranscriptionChunkArtifact[],
+): Promise<string[]> {
+  const grouped = new Map<string, TranscriptionChunkArtifact[]>()
+
+  for (const chunk of chunks) {
+    const existing = grouped.get(chunk.partId) ?? []
+    existing.push(chunk)
+    grouped.set(chunk.partId, existing)
+  }
+
+  const partIds = [...grouped.keys()].sort((left, right) => left.localeCompare(right))
+  const partPaths: string[] = []
+
+  for (const partId of partIds) {
+    const partChunks = (grouped.get(partId) ?? []).sort((left, right) => left.chunkOrder - right.chunkOrder)
+    const translatedChunks = await Promise.all(partChunks.map(async (chunk) => {
+      const translatedText = (await readText(chunk.translationPath)).trim()
+      if (!translatedText) {
+        throw new Error(`Chunk traducido vacío durante consolidación: ${path.basename(chunk.translationPath)}`)
+      }
+      return translatedText
+    }))
+
+    const partPath = path.join(outputDir, `translation_part_${partId}.txt`)
+    await writeTextAtomic(partPath, `${translatedChunks.join('\n\n').trim()}\n`)
+    partPaths.push(partPath)
+  }
+
+  return partPaths
+}
+
+async function consolidateGlobalTranslation(partPaths: string[], outputDir: string): Promise<string> {
+  const translatedParts = await Promise.all(partPaths.map(async (partPath) => {
+    const partText = (await readText(partPath)).trim()
+    if (!partText) {
+      throw new Error(`Parte traducida vacía durante consolidación global: ${path.basename(partPath)}`)
+    }
+    return partText
+  }))
+
+  const translationPath = path.join(outputDir, 'translation_es.txt')
+  await writeTextAtomic(translationPath, `${translatedParts.join('\n\n').trim()}\n`)
+  return translationPath
+}
+
+export async function translateToSpanish({
+  outputDir,
+  sourceLanguage,
+  log,
+}: {
+  outputDir: string
+  sourceLanguage?: string
+  log: (message: string) => Promise<void>
+}): Promise<void> {
+  const chunks = await collectTranscriptionChunks(outputDir)
+  if (chunks.length === 0) {
+    throw new Error('No hay transcription_chunk_* disponibles para traducir al español por chunks.')
+  }
+
+  await log(`Se traducirá la transcripción por chunks (${chunks.length} fragmentos) al español.`)
+
+  for (const chunk of chunks) {
+    await ensureTranslatedChunk({
+      chunk,
+      sourceLanguage,
+      log,
+    })
+  }
+
+  await log('Consolidando partes traducidas al español.')
+  const partPaths = await consolidateTranslationParts(outputDir, chunks)
+  await log(`Partes traducidas consolidadas: ${partPaths.length}.`)
+  const translationPath = await consolidateGlobalTranslation(partPaths, outputDir)
+  await log(`Traducción global al español consolidada en ${translationPath}.`)
+}
+
+async function ensureSpanishReadableText(
+  job: JobRecord,
+  transcriptionPath: string,
+  log: (message: string) => Promise<void>,
+  hooks: Pick<ProcessJobHooks, 'updateStatus' | 'refreshFiles'>,
+): Promise<SpanishOutputResolution> {
+  const outputLanguage = normalizeLanguageLabel(job.outputLanguage)
+  const translationPath = path.join(job.outputDir, 'translation_es.txt')
+  const transcription = await readText(transcriptionPath)
+
+  const forcedTranscriptionLanguage = normalizeLanguageLabel(job.transcriptionLanguage)
+  const detectedSourceLanguage = forcedTranscriptionLanguage && forcedTranscriptionLanguage !== 'auto'
+    ? forcedTranscriptionLanguage
+    : detectSourceLanguageFromTranscription(transcription)
+
+  await log(`Idioma fuente detectado/inferido para la transcripción: ${detectedSourceLanguage}.`)
+
+  if (outputLanguage !== 'es' && outputLanguage !== 'espanol' && outputLanguage !== 'spanish') {
+    await log(`No se genera traducción porque outputLanguage=${job.outputLanguage}.`)
+    return {
+      detectedSourceLanguage,
+      translationStatus: 'skipped',
+      spanishTextPath: transcriptionPath,
+    }
+  }
+
+  if (!job.generateTranslation) {
+    await log('La salida de traducción está desactivada. Se conserva la transcripción original sin generar translation_es.txt.')
+    return {
+      detectedSourceLanguage,
+      translationStatus: 'skipped',
+      spanishTextPath: transcriptionPath,
+    }
+  }
+
+  if (isSpanishLanguage(detectedSourceLanguage)) {
+    if (await isValidArtifact(translationPath)) {
+      await log(`Reutilizando artifact español ya existente en ${translationPath}.`)
+      return {
+        detectedSourceLanguage,
+        translationStatus: 'reused_spanish_transcription',
+        spanishTextPath: translationPath,
+      }
+    }
+    await log('La transcripción ya está en español. Se reutiliza como artifact final en español.')
+    await writeTextAtomic(translationPath, `${transcription.trim()}\n`)
+    await hooks.refreshFiles()
+    return {
+      detectedSourceLanguage,
+      translationStatus: 'reused_spanish_transcription',
+      spanishTextPath: translationPath,
+    }
+  }
+
+  await hooks.updateStatus('translating')
+  if (await hasReusableTranslatedArtifacts(job.outputDir)) {
+    await log(`Reutilizando traducción al español ya existente en ${translationPath}.`)
+    return {
+      detectedSourceLanguage,
+      translationStatus: 'translated_to_spanish',
+      spanishTextPath: translationPath,
+    }
+  }
+  if (await isValidArtifact(translationPath)) {
+    await log('Existe translation_es.txt, pero faltan artifacts chunked/part necesarios para reusar el estudio en español. Se regenerará la traducción por chunks.')
+  }
+  await log(`La transcripción no está en español (${detectedSourceLanguage}). Se traduce al español con Ollama.`)
+  await translateToSpanish({
+    outputDir: job.outputDir,
+    sourceLanguage: detectedSourceLanguage,
+    log,
+  })
+  await hooks.refreshFiles()
+  await log(`Traducción al español guardada en ${translationPath}.`)
+  return {
+    detectedSourceLanguage,
+    translationStatus: 'translated_to_spanish',
+    spanishTextPath: translationPath,
+  }
 }
 
 async function transcribeVideoParts({
@@ -581,7 +930,7 @@ async function transcribeVideoParts({
       const chunkTranscriptionPath = await transcribeAudio({
         audioPath: segmentPath,
         outputBase,
-        language: job.language,
+        language: job.transcriptionLanguage,
         onLog: log,
         signal,
       });
@@ -845,9 +1194,14 @@ async function buildGroundingPerformanceSummary({
 
 async function collectStudyParts(outputDir: string, speakerCountHint?: number): Promise<StudyPart[]> {
   const entries = await fs.readdir(outputDir);
+  const hasTranslatedParts = entries.some((fileName) => /^translation_part_\d{3}\.txt$/.test(fileName))
   const parts = await Promise.all(entries
     .map(async (fileName) => {
-      const match = fileName.match(/^transcription_part_(\d{3})\.txt$/);
+      const match = fileName.match(
+        hasTranslatedParts
+          ? /^translation_part_(\d{3})\.txt$/
+          : /^transcription_part_(\d{3})\.txt$/,
+      );
       if (!match?.[1]) {
         return null;
       }
@@ -863,9 +1217,12 @@ async function collectStudyParts(outputDir: string, speakerCountHint?: number): 
 
       for (let index = 0; index < chunkAudioPaths.length; index += 1) {
         const chunkOrder = index + 1;
+        const chunkBaseName = hasTranslatedParts
+          ? `translation_chunk_${match[1]}_${String(chunkOrder).padStart(3, '0')}.txt`
+          : `transcription_chunk_${match[1]}_${String(chunkOrder).padStart(3, '0')}.txt`
         const transcriptionChunkPath = path.join(
           outputDir,
-          `transcription_chunk_${match[1]}_${String(chunkOrder).padStart(3, '0')}.txt`,
+          chunkBaseName,
         );
         const text = (await readText(transcriptionChunkPath).catch(() => '')).trim();
         if (!text) continue

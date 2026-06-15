@@ -280,7 +280,7 @@ npm run dev:frontend
 6. Cada parte se vuelve a segmentar en subchunks más chicos para Whisper.
 7. `whisper.cpp` transcribe subchunk por subchunk, usando el idioma manual si lo cargás y un prompt con glosario.
 8. El backend fusiona los subchunks en `transcription_part_XXX.txt` y luego consolida todas las partes en `transcription.txt`.
-9. Si activás traducción, se crea `translation_es.txt` como placeholder.
+9. Si activás traducción y el video no está en español, el backend traduce la transcripción por chunks y consolida `translation_es.txt`; si ya está en español, reutiliza la transcripción como artifact final en español.
 10. Si activás resumen, Ollama genera una extracción exhaustiva por parte (`extraction_part_XXX.txt`) y luego consolida todo en `full_study_notes_es.txt`.
 11. El backend arma un `chunk_manifest.json`, un evidence pack con aliases de citas (`[C1]`, `[C2]`, etc.) y extrae claims estructurados por parte (`claims_part_XXX.json`).
 12. Un worker Python con LlamaIndex valida esos claims contra los chunks fuente y produce `grounding_report.json`.
@@ -298,7 +298,8 @@ Body:
 ```json
 {
   "url": "https://www.youtube.com/watch?v=...",
-  "language": "auto",
+  "transcriptionLanguage": "auto",
+  "outputLanguage": "es",
   "generateTranscription": true,
   "generateTranslation": true,
   "generateSummary": true
@@ -306,7 +307,7 @@ Body:
 ```
 
 > `generateTranscription` sigue existiendo en la API, aunque el procesamiento base necesita transcribir para habilitar traducción y resumen.
-> En `language` podés mandar `auto`, códigos ISO simples (`en`, `es`, `ja`) o nombres comunes como `English`, `Español`, `Japanese`.
+> `language` queda como alias legacy. Lo recomendado es usar `transcriptionLanguage` para el idioma del audio (`auto`, `en`, `es`, `ja`, `English`, `Español`, etc.) y `outputLanguage` para el idioma final consumible.
 
 ### `GET /api/jobs/:id`
 
@@ -407,6 +408,9 @@ output/
     job.json
     audio.mp3
     audio_denoised.wav
+    translation_chunk_001_001.txt
+    translation_chunk_001_002.txt
+    translation_part_001.txt
     transcription_part_001.txt
     extraction_part_001.txt
     transcription.txt
@@ -452,7 +456,7 @@ Además, cuando entran ventanas con recuperación semántica/thin reasoning, pue
 - **Fallback legacy**: `validation_report.json` sigue existiendo como red de seguridad y compatibilidad temporal, pero hoy convive con `grounding_report.json` y artifacts de recuperación más ricos.
 - **Runtime IA on-demand**: Ollama no se levanta al abrir la app; se inicia solo cuando un job con `generateSummary=true` lo necesita, queda en `idle` al terminar y puede apagarse solo para liberar RAM.
 - **Selector global de modelo**: el LLM principal se elige desde la UI, se persiste en `.runtime/model-selection.json` y se congela en `job.modelMetadata` al inicio de cada job para que el histórico siga siendo comparable.
-- **Traducción placeholder**: `translateToSpanish()` sigue siendo un placeholder hasta que decidas integrarla también con Ollama.
+- **Traducción chunked al español**: si el video no está en español, `translateToSpanish()` reutiliza los `transcription_chunk_*`, traduce cada fragmento con Ollama, consolida `translation_part_*` y finalmente genera `translation_es.txt` con escritura atómica y reanudación segura.
 
 ## Archivos clave
 
@@ -520,35 +524,11 @@ Además, cuando entran ventanas con recuperación semántica/thin reasoning, pue
 - `frontend/src/components/JobResourceUsagePanel.tsx`
   - RAM/CPU/procesos del job
 
-## Cómo extender luego con Ollama
-
-### Estrategia recomendada
-
-1. Mantener `transcription.txt` como fuente única.
-2. Reusar el cliente actual de Ollama para agregar traducción.
-3. Guardar la respuesta final en:
-   - `translation_es.txt`
-   - `summary_es.txt`
-
-### Ejemplo de evolución
-
-```ts
-async function translateToSpanish(outputDir: string, transcriptionPath: string): Promise<void> {
-  const transcription = await readText(transcriptionPath);
-  const translated = await askOllama({
-    system: 'Traducí al español rioplatense sin agregar contenido.',
-    prompt: transcription,
-  });
-
-  await writeText(path.join(outputDir, 'translation_es.txt'), translated);
-}
-```
-
 ## Limitaciones actuales
 
 - La cola es secuencial y deliberadamente simple.
 - La cancelación existe, pero el modelo de ejecución sigue siendo local y no distribuido.
-- La traducción todavía no usa un modelo real y sigue siendo placeholder.
+- La traducción larga depende del modelo local activo y, al hacerse por chunks, puede tener pequeñas variaciones terminológicas entre fragmentos.
 - La selección actual del modelo LLM principal es global; no existe todavía selección per-job ni perfiles tipo `fast/balanced/quality`.
 - El modelo de embeddings para grounding sigue separado y no se selecciona desde la UI.
 - YouTube puede responder con `HTTP 429` en algunos intentos de `yt-dlp`; cuando pasa, el job falla y conviene reintentar.
@@ -557,8 +537,8 @@ async function translateToSpanish(outputDir: string, transcriptionPath: string):
 
 ## Próximos pasos razonables
 
-1. Integrar también la traducción con Ollama.
-2. Mejorar streaming de progreso al frontend con SSE o WebSockets.
-3. Afinar thresholds de grounding y decisión por claim con casos reales.
-4. Seguir endureciendo el pipeline de thin reasoning / recovery para reducir `completed_with_warnings`.
-5. Si más adelante lo necesitás, separar la selección de LLM principal, embeddings y perfiles de inferencia sin mezclar responsabilidades en una sola UI.
+1. Mejorar streaming de progreso al frontend con SSE o WebSockets.
+2. Afinar thresholds de grounding y decisión por claim con casos reales.
+3. Seguir endureciendo el pipeline de thin reasoning / recovery para reducir `completed_with_warnings`.
+4. Si más adelante lo necesitás, separar la selección de LLM principal, embeddings y perfiles de inferencia sin mezclar responsabilidades en una sola UI.
+5. Si aparecen inconsistencias terminológicas entre chunks traducidos, agregar una pasada liviana de normalización post-traducción.

@@ -25,6 +25,12 @@ export async function writeText(filePath: string, content: string): Promise<void
   await fs.writeFile(filePath, content, 'utf-8');
 }
 
+export async function writeTextAtomic(filePath: string, content: string): Promise<void> {
+  const tempPath = `${filePath}.tmp`;
+  await fs.writeFile(tempPath, content, 'utf-8');
+  await fs.rename(tempPath, filePath);
+}
+
 export async function pathExists(targetPath: string): Promise<boolean> {
   try {
     await fs.access(targetPath);
@@ -34,31 +40,78 @@ export async function pathExists(targetPath: string): Promise<boolean> {
   }
 }
 
-export async function listJobFiles(jobId: string, jobDir: string): Promise<JobFileEntry[]> {
-  const dirEntries = await fs.readdir(jobDir, { withFileTypes: true });
-  const files = await Promise.all(
-    dirEntries
-      .filter((entry) => entry.isFile())
-      .map(async (entry) => {
-        const absolutePath = path.join(jobDir, entry.name);
-        const stats = await fs.stat(absolutePath);
-
-        return {
-          name: entry.name,
-          path: absolutePath,
-          size: stats.size,
-          createdAt: stats.birthtime.toISOString(),
-          downloadUrl: `/api/jobs/${jobId}/files/${encodeURIComponent(entry.name)}`,
-        } satisfies JobFileEntry;
-      }),
-  );
-
-  return files.sort((a, b) => a.name.localeCompare(b.name));
+function inferFileKind(relativePath: string): JobFileEntry['kind'] {
+  const normalized = relativePath.toLowerCase();
+  if (normalized.endsWith('.mp3') || normalized.endsWith('.wav') || normalized.includes('/audio')) {
+    return 'audio';
+  }
+  if (normalized.includes('transcription') || normalized.includes('translation_')) {
+    return 'transcript';
+  }
+  if (normalized.includes('summary') || normalized.includes('study_notes') || normalized.includes('glossary') || normalized.includes('outline')) {
+    return 'summary';
+  }
+  if (normalized.includes('grounding') || normalized.includes('evidence') || normalized.includes('citation')) {
+    return 'grounding';
+  }
+  if (normalized.includes('report') || normalized.includes('coverage') || normalized.includes('validation')) {
+    return 'report';
+  }
+  if (normalized.includes('log')) {
+    return 'log';
+  }
+  return 'other';
 }
 
-export function safeResolveFile(jobDir: string, fileName: string): string {
-  const resolved = path.resolve(jobDir, fileName);
-  if (!resolved.startsWith(path.resolve(jobDir) + path.sep) && resolved !== path.resolve(jobDir, path.basename(fileName))) {
+async function collectFilesRecursive(rootDir: string, currentDir = rootDir): Promise<string[]> {
+  const entries = await fs.readdir(currentDir, { withFileTypes: true });
+  const nested = await Promise.all(entries.map(async (entry) => {
+    const absolutePath = path.join(currentDir, entry.name);
+    if (entry.isDirectory()) {
+      return collectFilesRecursive(rootDir, absolutePath);
+    }
+    if (entry.isFile()) {
+      return [path.relative(rootDir, absolutePath)];
+    }
+    return [] as string[];
+  }));
+
+  return nested.flat();
+}
+
+export async function listJobFiles(jobId: string, rootDir: string, itemId?: string): Promise<JobFileEntry[]> {
+  const relativePaths = await collectFilesRecursive(rootDir).catch(() => []);
+  const files = await Promise.all(
+    relativePaths.map(async (relativePath) => {
+      const absolutePath = path.join(rootDir, relativePath);
+      const stats = await fs.stat(absolutePath);
+      const filename = path.basename(relativePath);
+      const encodedPath = encodeURIComponent(relativePath);
+      const downloadUrl = itemId
+        ? `/api/jobs/${jobId}/items/${encodeURIComponent(itemId)}/files/${encodedPath}`
+        : `/api/jobs/${jobId}/files/${encodedPath}`;
+
+      return {
+        itemId,
+        name: filename,
+        filename,
+        relativePath,
+        path: absolutePath,
+        size: stats.size,
+        createdAt: stats.birthtime.toISOString(),
+        downloadUrl,
+        kind: inferFileKind(relativePath),
+      } satisfies JobFileEntry;
+    }),
+  );
+
+  return files.sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+}
+
+export function safeResolveFile(rootDir: string, fileName: string): string {
+  const resolved = path.resolve(rootDir, fileName);
+  const resolvedRoot = path.resolve(rootDir);
+  if (!resolved.startsWith(`${resolvedRoot}${path.sep}`) && resolved !== path.resolve(rootDir, path.basename(fileName))) {
     throw new Error('Invalid file path');
   }
 
@@ -71,6 +124,8 @@ const TRANSCRIPTION_FILE_PATTERNS: RegExp[] = [
   /^transcription\.txt$/,
   /^transcription_part_\d+\.txt$/,
   /^transcription_chunk_\d+_\d+\.txt$/,
+  /^translation_part_\d+\.txt$/,
+  /^translation_chunk_\d+_\d+\.txt$/,
   /^translation_es\.txt$/,
 ];
 
