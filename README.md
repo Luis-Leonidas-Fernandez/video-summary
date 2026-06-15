@@ -272,22 +272,27 @@ npm run dev:frontend
 
 ## Flujo actual
 
-1. Pegás una URL válida de YouTube.
+1. Elegís uno de estos modos de entrada:
+   - video único (`url`)
+   - lista manual (`urls`)
+   - playlist (`playlistUrl`)
 2. El backend crea un job en memoria y una carpeta local dentro de `output/job_<timestamp>`.
-3. `yt-dlp` descarga y extrae el audio a `audio.mp3`.
-4. `ffmpeg` genera `audio_denoised.wav` con reducción de ruido, mono y 16 kHz.
-5. `ffmpeg` divide `audio_denoised.wav` en partes de 30 minutos dentro de `video_parts/`.
-6. Cada parte se vuelve a segmentar en subchunks más chicos para Whisper.
-7. `whisper.cpp` transcribe subchunk por subchunk, usando el idioma manual si lo cargás y un prompt con glosario.
-8. El backend fusiona los subchunks en `transcription_part_XXX.txt` y luego consolida todas las partes en `transcription.txt`.
-9. Si activás traducción y el video no está en español, el backend traduce la transcripción por chunks y consolida `translation_es.txt`; si ya está en español, reutiliza la transcripción como artifact final en español.
-10. Si activás resumen, Ollama genera una extracción exhaustiva por parte (`extraction_part_XXX.txt`) y luego consolida todo en `full_study_notes_es.txt`.
-11. El backend arma un `chunk_manifest.json`, un evidence pack con aliases de citas (`[C1]`, `[C2]`, etc.) y extrae claims estructurados por parte (`claims_part_XXX.json`).
-12. Un worker Python con LlamaIndex valida esos claims contra los chunks fuente y produce `grounding_report.json`.
-13. Si una ventana queda demasiado comprimida o con reasoning débil, entra el pipeline de recuperación semántica / thin reasoning para intentar reparar extracción, señales y grounding antes de degradar el resultado final.
-14. `validation_report.json` se mantiene como capa legacy de compatibilidad y debugging, pero ya no es la única fuente de validación del sistema.
-15. También se generan artefactos de estudio derivados: `outline_es.txt`, `key_concepts_es.txt`, `questions_es.txt` y `glossary_es.txt`.
-16. Todos los logs del proceso se escriben también en `logs.txt`.
+3. Si es playlist, primero entra en `resolving_sources`, expande videos con `yt-dlp` y recién después crea los items del lote.
+4. Para `url_list` y `playlist`, el job padre procesa cada item en secuencia y mantiene artifacts/estado aislados por video.
+5. `yt-dlp` descarga y extrae el audio a `audio.mp3`.
+6. `ffmpeg` genera `audio_denoised.wav` con reducción de ruido, mono y 16 kHz.
+7. `ffmpeg` divide `audio_denoised.wav` en partes de 30 minutos dentro de `video_parts/`.
+8. Cada parte se vuelve a segmentar en subchunks más chicos para Whisper.
+9. `whisper.cpp` transcribe subchunk por subchunk, usando el idioma manual si lo cargás y un prompt con glosario.
+10. El backend fusiona los subchunks en `transcription_part_XXX.txt` y luego consolida todas las partes en `transcription.txt`.
+11. Si activás traducción y el video no está en español, el backend traduce la transcripción por chunks y consolida `translation_es.txt`; si ya está en español, reutiliza la transcripción como artifact final en español.
+12. Si activás resumen, Ollama genera una extracción exhaustiva por parte (`extraction_part_XXX.txt`) y luego consolida todo en `full_study_notes_es.txt`.
+13. El backend arma un `chunk_manifest.json`, un evidence pack con aliases de citas (`[C1]`, `[C2]`, etc.) y extrae claims estructurados por parte (`claims_part_XXX.json`).
+14. Un worker Python con LlamaIndex valida esos claims contra los chunks fuente y produce `grounding_report.json`.
+15. Si una ventana queda demasiado comprimida o con reasoning débil, entra el pipeline de recuperación semántica / thin reasoning para intentar reparar extracción, señales y grounding antes de degradar el resultado final.
+16. `validation_report.json` se mantiene como capa legacy de compatibilidad y debugging, pero ya no es la única fuente de validación del sistema.
+17. También se generan artefactos de estudio derivados: `outline_es.txt`, `key_concepts_es.txt`, `questions_es.txt` y `glossary_es.txt`.
+18. Todos los logs del proceso se escriben también en `logs.txt`, con `logs.txt` adicional por item cuando el job es batch.
 
 ## Endpoints
 
@@ -306,14 +311,45 @@ Body:
 }
 ```
 
+También podés crear jobs batch con:
+
+```json
+{
+  "urls": [
+    "https://www.youtube.com/watch?v=abc123",
+    "https://www.youtube.com/watch?v=def456"
+  ],
+  "transcriptionLanguage": "auto",
+  "outputLanguage": "es",
+  "generateTranslation": true,
+  "generateSummary": true
+}
+```
+
+o:
+
+```json
+{
+  "playlistUrl": "https://www.youtube.com/playlist?list=...",
+  "transcriptionLanguage": "auto",
+  "outputLanguage": "es",
+  "generateTranslation": true,
+  "generateSummary": true
+}
+```
+
 > `generateTranscription` sigue existiendo en la API, aunque el procesamiento base necesita transcribir para habilitar traducción y resumen.
 > `language` queda como alias legacy. Lo recomendado es usar `transcriptionLanguage` para el idioma del audio (`auto`, `en`, `es`, `ja`, `English`, `Español`, etc.) y `outputLanguage` para el idioma final consumible.
+> `reuseFromJobId` solo está soportado para jobs de URL única en esta versión.
 
 ### `GET /api/jobs/:id`
 
 Devuelve el estado actual del job:
 
 - `pending`
+- `queued`
+- `resolving_sources`
+- `processing`
 - `cancelling`
 - `cancelled`
 - `downloading`
@@ -344,6 +380,7 @@ Solicita la cancelación del job.
 Comportamiento actual:
 
 - si el job todavía está en `pending`, se saca de la cola y pasa a `cancelled`
+- si el job está en `queued` o `resolving_sources`, se cancela sin ejecutar pipeline de item
 - si el job ya está corriendo, pasa a `cancelling`, se abortan requests activos y se fuerza apagado/unload del runtime IA cuando corresponde
 - si ya terminó, devuelve el job en su estado final sin hacer nada extra
 
@@ -357,6 +394,15 @@ Devuelve el estado del runtime local de IA, por ejemplo:
 - `ollamaModel`
 - `idleShutdownMs`
 - timestamps de actividad/apagado programado cuando aplican
+
+### `GET /api/system/memory`
+
+Devuelve memoria aproximada del host para la UI operativa:
+
+- `totalMb`
+- `usedMb`
+- `freeMb`
+- `usedPercent`
 
 ### `GET /api/models`
 
@@ -398,9 +444,17 @@ Lista los archivos generados para ese trabajo.
 
 Entrega el archivo para verlo o descargarlo.
 
+### `GET /api/jobs/:id/items/:itemId/files`
+
+Lista los archivos del item seleccionado dentro de un job batch.
+
+### `GET /api/jobs/:id/items/:itemId/files/:filename`
+
+Entrega un archivo scoped al item para evitar colisiones entre varios `summary_es.txt`, `grounding_report.json`, etc.
+
 ## Estructura de salida
 
-Ejemplo:
+Ejemplo single URL:
 
 ```text
 output/
@@ -433,6 +487,33 @@ output/
     logs.txt
 ```
 
+Ejemplo batch:
+
+```text
+output/
+  job_1714200000000/
+    job.json
+    logs.txt
+    item_001/
+      job.json
+      logs.txt
+      audio.mp3
+      transcription.txt
+      translation_chunk_001_001.txt
+      translation_part_001.txt
+      translation_es.txt
+      full_study_notes_es.txt
+      grounding_report.json
+    item_002/
+      job.json
+      logs.txt
+      audio.mp3
+      transcription.txt
+      translation_es.txt
+      full_study_notes_es.txt
+      grounding_report.json
+```
+
 Además, cuando entran ventanas con recuperación semántica/thin reasoning, pueden aparecer artifacts por ventana como:
 
 - `thin_reasoning_eval_W*.json`
@@ -444,7 +525,7 @@ Además, cuando entran ventanas con recuperación semántica/thin reasoning, pue
 
 - **Sin base de datos**: toda la metadata principal vive en archivos locales (`output/job_xxx/job.json`, `logs.txt`, reports JSON/TXT) y el proceso también mantiene un mapa en memoria para servir la UI.
 - **Recuperación al reiniciar**: al boot, el backend relee `job.json` desde `/output`; si encuentra jobs que quedaron a mitad de ejecución, los marca como `failed` por reinicio del servidor en lugar de “olvidarlos”.
-- **Cola simple en memoria**: procesa un job por vez para evitar mezclar stdout/stderr y simplificar el flujo local.
+- **Cola simple en memoria**: procesa un job por vez para evitar mezclar stdout/stderr y simplificar el flujo local; dentro de un batch, los items corren secuencialmente.
 - **Cancelación cooperativa**: la cancelación usa `AbortController`, corta requests activos y fuerza stop/unload del runtime cuando corresponde.
 - **`spawn` en vez de `execFile`**: permite leer logs en tiempo real desde `stdout` y `stderr`.
 - **Transcripción local optimizada para Mac**: se usa `whisper.cpp` con `whisper-cli`, modelo `large-v3`, prompt con glosario y denoise previo en `ffmpeg`.
@@ -454,7 +535,7 @@ Además, cuando entran ventanas con recuperación semántica/thin reasoning, pue
 - **Recovery por ventanas**: si una ventana sale con schema roto, drift, low content o thin reasoning, el backend puede intentar contract repair, strict re-emit, semantic enrichment, preserve previous extraction y fallback controlado.
 - **Thin reasoning chain**: el pipeline puede correr planner → critique → resolve → controlled rewrite con hints derivados de evidencia para intentar rescatar ventanas comprimidas sin inventar contenido.
 - **Fallback legacy**: `validation_report.json` sigue existiendo como red de seguridad y compatibilidad temporal, pero hoy convive con `grounding_report.json` y artifacts de recuperación más ricos.
-- **Runtime IA on-demand**: Ollama no se levanta al abrir la app; se inicia solo cuando un job con `generateSummary=true` lo necesita, queda en `idle` al terminar y puede apagarse solo para liberar RAM.
+- **Runtime IA on-demand**: Ollama no se levanta al abrir la app; se inicia solo cuando un job con `generateSummary=true` o `generateTranslation=true` lo necesita, queda en `idle` al terminar y puede apagarse solo para liberar RAM.
 - **Selector global de modelo**: el LLM principal se elige desde la UI, se persiste en `.runtime/model-selection.json` y se congela en `job.modelMetadata` al inicio de cada job para que el histórico siga siendo comparable.
 - **Traducción chunked al español**: si el video no está en español, `translateToSpanish()` reutiliza los `transcription_chunk_*`, traduce cada fragmento con Ollama, consolida `translation_part_*` y finalmente genera `translation_es.txt` con escritura atómica y reanudación segura.
 
@@ -514,11 +595,19 @@ Además, cuando entran ventanas con recuperación semántica/thin reasoning, pue
   - polling
   - carga de reports
   - wiring general de la UI
+- `frontend/src/presentation.ts`
+  - derivación de health operativo del job y prioridad visual
 - `frontend/src/components/AiRuntimeBanner.tsx`
   - estado del runtime
   - selector global de modelo
+- `frontend/src/components/SystemMemoryWidget.tsx`
+  - memoria aproximada del host para operación local
 - `frontend/src/components/GroundingSummary.tsx`
   - lectura del grounding moderno
+- `frontend/src/components/JobStatus.tsx`
+  - resumen operativo del lote
+  - selector de item
+  - metadata técnica expandible
 - `frontend/src/components/ValidationSummary.tsx`
   - lectura del reporte legacy
 - `frontend/src/components/JobResourceUsagePanel.tsx`
