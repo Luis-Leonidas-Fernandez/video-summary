@@ -1,10 +1,51 @@
 # Video Study Tool
 
-App local para Mac que recibe una URL de YouTube, descarga el audio, transcribe localmente con `whisper.cpp`, permite forzar idioma manual, aplica denoise previo con `ffmpeg` y genera material de estudio exhaustivo con Ollama, guardando todos los artefactos en archivos dentro de `/output`.
+App local para Mac que procesa videos de YouTube para generar:
 
-La validación nueva ya no depende principalmente de “unmatched labels”: ahora el backend genera **claims con citas a chunks** y corre un paso de **grounding** con LlamaIndex para medir qué afirmaciones están realmente respaldadas por la transcripción.
+- transcripción local
+- traducción al español
+- notas de estudio
+- grounding por claims con citas
+- artifacts de auditoría y debugging
 
-Además, el pipeline ahora arma un **evidence pack cerrado** con aliases `[C1]`, `[C2]`, etc. El modelo nunca ve ids reales de chunks y primero pasa por una validación estricta de integridad de citas antes del grounding semántico.
+Acepta tres modos de entrada:
+
+- **video único**
+- **lista manual de URLs**
+- **playlist de YouTube**
+
+Todo corre en local y deja los resultados dentro de `/output`.
+
+## Qué hace el sistema
+
+Pipeline base:
+
+1. descarga audio con `yt-dlp`
+2. limpia audio con `ffmpeg`
+3. transcribe con `whisper.cpp`
+4. traduce al español si hace falta
+5. genera extracción / material de estudio con Ollama
+6. valida claims con grounding usando LlamaIndex
+7. guarda reports, artifacts y logs por job e item
+
+Puntos importantes:
+
+- la validación ya no depende principalmente de `unmatched labels`
+- el backend genera **claims con citas a chunks**
+- corre **grounding** con LlamaIndex para medir soporte real
+- arma un **evidence pack cerrado** con aliases `[C1]`, `[C2]`, etc.
+- el modelo nunca ve ids reales de chunks
+- antes del grounding semántico pasa por validación estricta de integridad de citas
+
+## Lectura rápida
+
+Si querés entender el sistema sin leer todo:
+
+1. **Instalación** → dependencias del sistema + backend + frontend + worker Python
+2. **Cómo correrlo** → `npm run dev`
+3. **Flujo actual** → qué pasa desde la URL hasta los artifacts
+4. **Endpoints** → contrato HTTP
+5. **Decisiones técnicas actuales** → arquitectura y tradeoffs
 
 ## Stack
 
@@ -17,7 +58,7 @@ Además, el pipeline ahora arma un **evidence pack cerrado** con aliases `[C1]`,
   - `whisper.cpp` (`whisper-cli`)
   - `ollama`
 
-## Estructura
+## Estructura del repo
 
 ```text
 video-summary/
@@ -66,6 +107,17 @@ video-summary/
 ```
 
 ## Instalación
+
+### Resumen corto
+
+Necesitás:
+
+- `yt-dlp`
+- `ffmpeg`
+- `ollama`
+- `whisper.cpp`
+- Node.js / npm
+- Python con virtualenv para el worker de grounding
 
 ### 1) Herramientas del sistema
 
@@ -272,6 +324,8 @@ npm run dev:frontend
 
 ## Flujo actual
 
+### Visión general
+
 1. Elegís uno de estos modos de entrada:
    - video único (`url`)
    - lista manual (`urls`)
@@ -294,9 +348,27 @@ npm run dev:frontend
 17. También se generan artefactos de estudio derivados: `outline_es.txt`, `key_concepts_es.txt`, `questions_es.txt` y `glossary_es.txt`.
 18. Todos los logs del proceso se escriben también en `logs.txt`, con `logs.txt` adicional por item cuando el job es batch.
 
+### Qué cambia entre single y batch
+
+- **single URL**: el job trabaja directo sobre una sola carpeta de salida
+- **url_list / playlist**: existe un job padre y cada video corre como `item_001`, `item_002`, etc.
+- **playlist**: primero pasa por `resolving_sources`
+- **batch**: los items corren secuencialmente, no en paralelo
+
+### Traducción al español
+
+- si el audio ya está en español → reutiliza la transcripción
+- si no está en español → traduce por chunks
+- artifacts principales:
+  - `translation_chunk_*`
+  - `translation_part_*`
+  - `translation_es.txt`
+
 ## Endpoints
 
 ### `POST /api/jobs`
+
+#### Payload single
 
 Body:
 
@@ -311,7 +383,7 @@ Body:
 }
 ```
 
-También podés crear jobs batch con:
+#### Payload batch manual
 
 ```json
 {
@@ -326,7 +398,7 @@ También podés crear jobs batch con:
 }
 ```
 
-o:
+#### Payload playlist
 
 ```json
 {
@@ -344,6 +416,8 @@ o:
 
 ### `GET /api/jobs/:id`
 
+#### Estados posibles
+
 Devuelve el estado actual del job:
 
 - `pending`
@@ -360,7 +434,7 @@ Devuelve el estado actual del job:
 - `completed_with_warnings`
 - `failed`
 
-Además incluye:
+#### Respuesta incluye
 
 - estado del job
 - archivos detectados
@@ -369,7 +443,7 @@ Además incluye:
 - `logsTruncated`
 - error si aplica
 
-Para inspección adicional de logs existe también:
+#### Logs adicionales
 
 - `GET /api/jobs/:id/logs?tail=200`
 
@@ -377,7 +451,7 @@ Para inspección adicional de logs existe también:
 
 Solicita la cancelación del job.
 
-Comportamiento actual:
+#### Comportamiento actual
 
 - si el job todavía está en `pending`, se saca de la cola y pasa a `cancelled`
 - si el job está en `queued` o `resolving_sources`, se cancela sin ejecutar pipeline de item
@@ -408,7 +482,7 @@ Devuelve memoria aproximada del host para la UI operativa:
 
 Lista los modelos locales detectados en Ollama a través de `/api/tags`.
 
-Notas:
+#### Notas
 
 - el endpoint puede devolver también embeddings
 - los embeddings salen marcados como `selectable=false`
@@ -429,7 +503,7 @@ Devuelve la selección global actual del modelo principal:
 
 Cambia el modelo LLM principal global para **jobs futuros**.
 
-Reglas actuales:
+#### Reglas actuales
 
 - persiste la selección en `.runtime/model-selection.json`
 - valida que el modelo exista en Ollama local
@@ -454,7 +528,7 @@ Entrega un archivo scoped al item para evitar colisiones entre varios `summary_e
 
 ## Estructura de salida
 
-Ejemplo single URL:
+### Ejemplo single URL
 
 ```text
 output/
@@ -487,7 +561,7 @@ output/
     logs.txt
 ```
 
-Ejemplo batch:
+### Ejemplo batch
 
 ```text
 output/
@@ -514,7 +588,9 @@ output/
       grounding_report.json
 ```
 
-Además, cuando entran ventanas con recuperación semántica/thin reasoning, pueden aparecer artifacts por ventana como:
+### Artifacts adicionales de recuperación semántica
+
+Cuando entran ventanas con recuperación semántica/thin reasoning, pueden aparecer artifacts por ventana como:
 
 - `thin_reasoning_eval_W*.json`
 - `reasoning_resolved_changes_W*.json`
@@ -522,6 +598,8 @@ Además, cuando entran ventanas con recuperación semántica/thin reasoning, pue
 - `evidence_hints_W*.json`
 
 ## Decisiones técnicas actuales
+
+### Arquitectura y operación
 
 - **Sin base de datos**: toda la metadata principal vive en archivos locales (`output/job_xxx/job.json`, `logs.txt`, reports JSON/TXT) y el proceso también mantiene un mapa en memoria para servir la UI.
 - **Recuperación al reiniciar**: al boot, el backend relee `job.json` desde `/output`; si encuentra jobs que quedaron a mitad de ejecución, los marca como `failed` por reinicio del servidor en lugar de “olvidarlos”.
@@ -540,6 +618,8 @@ Además, cuando entran ventanas con recuperación semántica/thin reasoning, pue
 - **Traducción chunked al español**: si el video no está en español, `translateToSpanish()` reutiliza los `transcription_chunk_*`, traduce cada fragmento con Ollama, consolida `translation_part_*` y finalmente genera `translation_es.txt` con escritura atómica y reanudación segura.
 
 ## Archivos clave
+
+### Backend
 
 - `backend/src/index.ts`
   - arranque del backend
@@ -591,6 +671,9 @@ Además, cuando entran ventanas con recuperación semántica/thin reasoning, pue
 - `backend/src/services/studyExtraction.ts`
   - `generateExtractionForPart()`
   - `consolidateExtractions()`
+
+### Frontend
+
 - `frontend/src/App.tsx`
   - polling
   - carga de reports
