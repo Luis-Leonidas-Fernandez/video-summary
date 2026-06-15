@@ -1,20 +1,35 @@
 export type JobStatus =
   | 'pending'
-  | 'cancelling'
-  | 'cancelled'
+  | 'queued'
+  | 'resolving_sources'
+  | 'processing'
   | 'downloading'
   | 'transcribing'
   | 'translating'
   | 'summarizing'
+  | 'cancelling'
+  | 'cancelled'
   | 'completed'
   | 'completed_with_warnings'
   | 'failed';
 
+export type ItemStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'warning';
 export type JobLanguage = string;
+export type JobInputMode = 'single_url' | 'url_list' | 'playlist';
+export type BatchSourceType = 'single' | 'batch_list' | 'playlist';
+export type BatchFailurePolicy = 'continue_on_item_failure' | 'fail_fast';
+export type TranscriptionQuality = 'ok' | 'suspicious' | 'poor';
+export type GroundingStatus = 'grounded' | 'partially_grounded' | 'failed_grounding' | 'needs_human_review' | 'too_compressed' | 'legacy_warning' | 'unknown';
+export type ResourceUsageScope = 'batch_aggregate' | 'last_item' | 'single_item';
+export type TranslationStatus = 'reused_spanish_transcription' | 'translated_to_spanish' | 'skipped';
 
 export interface CreateJobInput {
-  url: string;
-  language: JobLanguage;
+  url?: string;
+  urls?: string[];
+  playlistUrl?: string;
+  language?: JobLanguage;
+  transcriptionLanguage?: JobLanguage;
+  outputLanguage?: JobLanguage;
   generateTranscription?: boolean;
   generateTranslation: boolean;
   generateSummary: boolean;
@@ -22,12 +37,23 @@ export interface CreateJobInput {
   reuseFromJobId?: string;
 }
 
+export interface JobOriginalInput {
+  url?: string;
+  urls?: string[];
+  playlistUrl?: string;
+}
+
 export interface JobFileEntry {
+  itemId?: string;
   name: string;
+  filename: string;
+  relativePath: string;
   path: string;
   size: number;
   createdAt: string;
   downloadUrl: string;
+  mimeType?: string;
+  kind?: 'transcript' | 'summary' | 'grounding' | 'audio' | 'video' | 'log' | 'report' | 'other';
 }
 
 export interface JobResourceUsage {
@@ -48,13 +74,64 @@ export interface JobModelMetadata {
   modelSelectionSource: ModelSelectionSource;
 }
 
+export interface BatchJobItem {
+  itemId: string;
+  index: number;
+  sourceUrl: string;
+  normalizedUrl: string;
+  sourceType: BatchSourceType;
+  status: ItemStatus;
+  outputDir: string;
+  files: JobFileEntry[];
+  error?: string;
+  warnings?: string[];
+  progress?: number;
+  startedAt?: string;
+  completedAt?: string;
+  itemWallClockMs?: number;
+  currentStage?: 'pending' | 'processing' | 'downloading' | 'transcribing' | 'translating' | 'summarizing';
+  resourceUsage?: JobResourceUsage;
+  transcriptionQuality?: TranscriptionQuality;
+  groundingStatus?: GroundingStatus;
+  groundingDecisionReason?: string;
+  detectedSourceLanguage?: string;
+  translationStatus?: TranslationStatus;
+  claimsValidated?: number;
+  unsupportedClaimCount?: number;
+  invalidCitationCount?: number;
+  windowsTooCompressed?: number;
+}
+
+export interface JobBatchSummary {
+  totalItems: number;
+  completedItems: number;
+  failedItems: number;
+  cancelledItems: number;
+  pendingItems: number;
+  warningItems: number;
+  activeItemId?: string;
+}
+
 export interface JobRecord {
+  schemaVersion?: number;
   id: string;
   createdAt: string;
   updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  batchWallClockMs?: number;
+  resourceUsageScope?: ResourceUsageScope;
   status: JobStatus;
   url: string;
+  inputMode?: JobInputMode;
+  originalInput?: JobOriginalInput;
+  sourceUrls?: string[];
+  resolvedAt?: string;
+  resolutionError?: string;
+  failurePolicy?: BatchFailurePolicy;
   language: JobLanguage;
+  transcriptionLanguage: JobLanguage;
+  outputLanguage: JobLanguage;
   generateTranscription: boolean;
   generateTranslation: boolean;
   generateSummary: boolean;
@@ -62,19 +139,36 @@ export interface JobRecord {
   reusedFromJobId?: string;
   outputDir: string;
   files: JobFileEntry[];
+  items?: BatchJobItem[];
+  summary?: JobBatchSummary;
   logs: string[];
   resourceUsage?: JobResourceUsage;
   modelMetadata?: JobModelMetadata;
+  detectedSourceLanguage?: string;
+  translationStatus?: TranslationStatus;
   error?: string;
 }
 
 export interface JobResponse {
+  schemaVersion?: number;
   id: string;
   createdAt: string;
   updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  batchWallClockMs?: number;
+  resourceUsageScope?: ResourceUsageScope;
   status: JobStatus;
   url: string;
+  inputMode?: JobInputMode;
+  originalInput?: JobOriginalInput;
+  sourceUrls?: string[];
+  resolvedAt?: string;
+  resolutionError?: string;
+  failurePolicy?: BatchFailurePolicy;
   language: JobLanguage;
+  transcriptionLanguage: JobLanguage;
+  outputLanguage: JobLanguage;
   generateTranscription: boolean;
   generateTranslation: boolean;
   generateSummary: boolean;
@@ -82,11 +176,15 @@ export interface JobResponse {
   reusedFromJobId?: string;
   outputDir: string;
   files: JobFileEntry[];
+  items?: BatchJobItem[];
+  summary?: JobBatchSummary;
   logs: string[];
   logCount: number;
   logsTruncated: boolean;
   resourceUsage?: JobResourceUsage;
   modelMetadata?: JobModelMetadata;
+  detectedSourceLanguage?: string;
+  translationStatus?: TranslationStatus;
   error?: string;
   progress?: number;
 }
