@@ -1,12 +1,36 @@
 # Video Study Tool
 
-App local para Mac que procesa videos de YouTube para generar:
+> Pipeline local para **descargar, transcribir, traducir, estudiar y validar videos** con artifacts auditables, grounding por claims y runtime IA controlado en tu Mac.
+
+---
+
+## Índice rápido
+
+- [Qué resuelve](#qué-resuelve)
+- [Capacidades principales](#capacidades-principales)
+- [Flujo actual](#flujo-actual)
+- [Stack](#stack)
+- [Estructura del repo](#estructura-del-repo)
+- [Instalación](#instalación)
+- [Cómo correrlo](#cómo-correrlo)
+- [API](#api)
+- [Outputs y artifacts](#outputs-y-artifacts)
+- [Decisiones técnicas](#decisiones-técnicas)
+- [Archivos clave](#archivos-clave)
+- [Limitaciones actuales](#limitaciones-actuales)
+- [Próximos pasos](#próximos-pasos)
+
+---
+
+## Qué resuelve
+
+Este proyecto toma videos de YouTube y produce una salida **estudiable, trazable y auditable**:
 
 - transcripción local
-- traducción al español
+- traducción final al español
 - notas de estudio
 - grounding por claims con citas
-- artifacts de auditoría y debugging
+- artifacts de debugging y recuperación semántica
 
 Acepta tres modos de entrada:
 
@@ -14,49 +38,108 @@ Acepta tres modos de entrada:
 - **lista manual de URLs**
 - **playlist de YouTube**
 
-Todo corre en local y deja los resultados dentro de `/output`.
+Todos los resultados quedan en `output/`.
 
-## Qué hace el sistema
+---
 
-Pipeline base:
+## Capacidades principales
 
-1. descarga audio con `yt-dlp`
-2. limpia audio con `ffmpeg`
-3. transcribe con `whisper.cpp`
-4. traduce al español si hace falta
-5. genera extracción / material de estudio con Ollama
-6. valida claims con grounding usando LlamaIndex
-7. guarda reports, artifacts y logs por job e item
+| Capacidad | Qué hace |
+| --- | --- |
+| **ASR local** | Descarga audio, limpia ruido y transcribe con `whisper.cpp` |
+| **Salida final en español** | Reutiliza transcripción si ya está en español o traduce por chunks si no lo está |
+| **Extracción de estudio** | Genera notas exhaustivas por parte y consolida `full_study_notes_es.txt` |
+| **Grounding moderno** | Extrae claims con citas y valida soporte real contra chunks fuente |
+| **Recovery semántico** | Repara ventanas flojas con contract repair, strict re-emit y thin reasoning chain |
+| **Runtime IA on-demand** | Levanta Ollama solo cuando hace falta y libera RAM al terminar |
+| **Selector global de modelo** | Permite elegir el LLM principal desde la UI para jobs futuros |
+| **Soporte batch** | Procesa `urls[]` y playlists con job padre + items aislados |
+| **Observabilidad** | Logs, reports, artifacts intermedios y trazas con Opik |
 
-Puntos importantes:
+---
 
-- la validación ya no depende principalmente de `unmatched labels`
-- el backend genera **claims con citas a chunks**
-- corre **grounding** con LlamaIndex para medir soporte real
-- arma un **evidence pack cerrado** con aliases `[C1]`, `[C2]`, etc.
-- el modelo nunca ve ids reales de chunks
-- antes del grounding semántico pasa por validación estricta de integridad de citas
+## Flujo actual
 
-## Lectura rápida
+### Vista ejecutiva
 
-Si querés entender el sistema sin leer todo:
+1. elegís `url`, `urls` o `playlistUrl`
+2. el backend crea `job_<timestamp>`
+3. si es playlist, primero entra en `resolving_sources`
+4. descarga y limpia audio
+5. particiona el video y luego subchunkea para ASR
+6. transcribe con `whisper.cpp`
+7. decide si reutiliza español o traduce por chunks
+8. genera extracción / notas con Ollama
+9. construye claims, citas y evidence packs
+10. valida grounding con LlamaIndex
+11. si una ventana sale floja, intenta recuperación semántica
+12. guarda reports, outputs finales y logs
 
-1. **Instalación** → dependencias del sistema + backend + frontend + worker Python
-2. **Cómo correrlo** → `npm run dev`
-3. **Flujo actual** → qué pasa desde la URL hasta los artifacts
-4. **Endpoints** → contrato HTTP
-5. **Decisiones técnicas actuales** → arquitectura y tradeoffs
+### Pipeline detallado
+
+1. `yt-dlp` descarga y extrae `audio.mp3`
+2. `ffmpeg` genera `audio_denoised.wav` (mono, 16 kHz, con denoise)
+3. `ffmpeg` parte el audio en bloques de 30 minutos
+4. cada parte se divide en subchunks chicos para Whisper
+5. `whisper.cpp` transcribe chunk por chunk con prompt + glosario
+6. el backend consolida `transcription_part_XXX.txt` y luego `transcription.txt`
+7. si el contenido no está en español, genera:
+   - `translation_chunk_*`
+   - `translation_part_*`
+   - `translation_es.txt`
+8. si el contenido ya está en español, reutiliza la transcripción y genera igual `translation_es.txt` como artifact estable
+9. Ollama produce `extraction_part_XXX.txt` y consolida `full_study_notes_es.txt`
+10. el pipeline arma `chunk_manifest.json`, claims estructurados y evidence packs con aliases `[C1]`, `[C2]`, etc.
+11. un worker Python con LlamaIndex produce `grounding_report.json`
+12. si una ventana sale comprimida, con schema roto o thin reasoning, entra recovery semántico
+13. además se generan derivados de estudio:
+   - `outline_es.txt`
+   - `key_concepts_es.txt`
+   - `questions_es.txt`
+   - `glossary_es.txt`
+
+### Qué cambia entre single y batch
+
+| Modo | Comportamiento |
+| --- | --- |
+| **single URL** | trabaja sobre una sola carpeta de salida |
+| **url_list** | crea un job padre y procesa `item_001`, `item_002`, etc. |
+| **playlist** | primero resuelve fuentes con `yt-dlp --flat-playlist` |
+| **batch** | procesa items en secuencia, no en paralelo |
+
+---
 
 ## Stack
 
-- Frontend: React + Vite + TypeScript
-- Backend: Node.js + Express + TypeScript
-- Persistencia: archivos locales en `/output`
-- Herramientas del sistema:
-  - `yt-dlp`
-  - `ffmpeg`
-  - `whisper.cpp` (`whisper-cli`)
-  - `ollama`
+### Frontend
+
+- React
+- Vite
+- TypeScript
+
+### Backend
+
+- Node.js
+- Express
+- TypeScript
+
+### Persistencia
+
+- archivos locales en `output/`
+
+### Herramientas del sistema
+
+- `yt-dlp`
+- `ffmpeg`
+- `ollama`
+- `whisper.cpp` (`whisper-cli`)
+
+### Worker de grounding
+
+- Python
+- LlamaIndex
+
+---
 
 ## Estructura del repo
 
@@ -68,8 +151,9 @@ video-summary/
       requirements.txt
     src/
       index.ts
-      routes/jobs.routes.ts
-      routes/modelSelection.routes.ts
+      routes/
+        jobs.routes.ts
+        modelSelection.routes.ts
       services/
         aiRuntimeManager.ts
         jobQueue.ts
@@ -106,6 +190,8 @@ video-summary/
   README.md
 ```
 
+---
+
 ## Instalación
 
 ### Resumen corto
@@ -130,16 +216,17 @@ cmake -B build-nocoreml -DWHISPER_COREML=OFF
 cmake --build build-nocoreml -j 8 --config Release
 ```
 
-> El backend valida estas dependencias antes de procesar cada trabajo. Si falta alguna, el job falla con un mensaje claro.
-> En este proyecto conviene usar un build sin CoreML para `large-v3`, porque así evitás depender del encoder `.mlmodelc`. Si instalaste `whisper.cpp` en otra ruta, ajustá `WHISPER_CPP_BINARY` y `WHISPER_CPP_MODEL_PATH` en `backend/.env`.
+> El backend valida estas dependencias antes de procesar cada job.
+> Si falta alguna, el job falla con un mensaje claro.
+
+> En este proyecto conviene usar un build **sin CoreML** para `large-v3`, así evitás depender del encoder `.mlmodelc`.
+> Si instalaste `whisper.cpp` en otra ruta, ajustá `WHISPER_CPP_BINARY` y `WHISPER_CPP_MODEL_PATH` en `backend/.env`.
 
 ### 2) Configuración de Ollama
 
-Este proyecto usa Ollama con un **modelo LLM principal configurable**. El valor inicial sale de `backend/.env`:
+El proyecto usa un **modelo LLM principal configurable**. El valor inicial sale de `backend/.env`.
 
-- `gemma3:12b`
-
-Variables en `backend/.env`:
+Variables principales:
 
 ```env
 PORT=3001
@@ -162,9 +249,6 @@ FULL_NOTES_OLLAMA_NUM_PREDICT=700
 FULL_NOTES_OLLAMA_NUM_CTX=8192
 GROUNDING_OLLAMA_NUM_PREDICT=700
 GROUNDING_OLLAMA_NUM_CTX=8192
-# Legacy fallback temporal si todavía no migraste:
-# OLLAMA_NUM_PREDICT=700
-# OLLAMA_NUM_CTX=2048
 GROUNDING_MODE=auto
 GROUNDING_PYTHON_BIN=/Users/luis/Desktop/video-summary/backend/grounding_worker/.venv/bin/python3
 GROUNDING_WORKER_PATH=/Users/luis/Desktop/video-summary/backend/grounding_worker/grounding_worker.py
@@ -194,36 +278,37 @@ Si querés levantar Ollama manualmente:
 ollama serve
 ```
 
-En la UI vas a ver un selector global dentro del panel **Runtime de IA**:
+### Selector global de modelo
 
-- lista los modelos locales detectados desde `Ollama /api/tags`
-- permite cambiar solo el **LLM principal** para jobs futuros
-- persiste la selección en `.runtime/model-selection.json`
-- no toca el modelo de embeddings ni Whisper
-- si hay jobs IA activos, el cambio se bloquea hasta que el runtime quede libre
+En la UI, dentro del panel **Runtime de IA**, podés:
 
-Si el modelo persistido desaparece de Ollama, el backend intenta volver al `OLLAMA_MODEL` del `.env` y te muestra una advertencia.
+- listar modelos locales detectados desde `Ollama /api/tags`
+- cambiar el **LLM principal** para jobs futuros
+- persistir la selección en `.runtime/model-selection.json`
+- mantener separados Whisper y embeddings
+- bloquear el cambio si hay jobs IA activos
+
+Si el modelo persistido desaparece, el backend intenta volver al `OLLAMA_MODEL` del `.env` y expone una advertencia.
 
 ### 2.1) Observabilidad con Opik
 
-El backend también está instrumentado con **Opik** para seguir trazas del pipeline y de las llamadas al modelo.
+El backend está instrumentado con **Opik** para trazas del pipeline y llamadas al modelo.
+
+Puntos clave:
 
 - configuración inicial en `backend/src/index.ts`
 - cliente en `backend/src/services/opikTracer.ts`
 - trace raíz del pipeline en `backend/src/services/videoProcessor.ts`
-- spans/calls del LLM enlazados desde `backend/src/services/ollamaClient.ts`
+- spans LLM enlazados desde `backend/src/services/ollamaClient.ts`
 
-Eso te permite ver:
+Eso te deja inspeccionar:
 
 - descarga
 - transcripción
 - resumen / extracción
 - llamadas LLM asociadas al trace activo
 
-Importante:
-
-- la instrumentación está en el backend, no en el frontend
-- Opik sirve para observabilidad y debugging; no cambia la lógica del pipeline
+> Opik es observabilidad. No cambia la lógica del pipeline.
 
 ### 3) Dependencias del backend
 
@@ -240,7 +325,10 @@ cd /ruta/a/video-summary/backend/grounding_worker
 ./.venv/bin/python3 -m pip install -r requirements.txt
 ```
 
-> El worker debe correr dentro de su propio virtualenv. Con el Python del sistema (`/usr/bin/python3`, 3.9) LlamaIndex moderno puede romper por incompatibilidades, y Homebrew Python además está protegido por PEP 668 si intentás instalar globalmente. Si faltan dependencias, el job sigue con fallback legacy **solo si** `GROUNDING_MODE=auto`. Si ponés `GROUNDING_MODE=required`, el grounding pasa a ser obligatorio.
+> El worker debe correr dentro de su propio virtualenv.
+> Con el Python del sistema (`/usr/bin/python3`, 3.9) LlamaIndex moderno puede romper por incompatibilidades.
+> Si faltan dependencias, el job sigue con fallback legacy **solo si** `GROUNDING_MODE=auto`.
+> Si usás `GROUNDING_MODE=required`, el grounding pasa a ser obligatorio.
 
 ### 5) Dependencias del frontend
 
@@ -256,9 +344,11 @@ cd /ruta/a/video-summary
 npm run install:all
 ```
 
-## Cómo correr el proyecto
+---
 
-### Opción recomendada: un solo comando
+## Cómo correrlo
+
+### Opción recomendada
 
 ```bash
 cd /ruta/a/video-summary
@@ -267,52 +357,51 @@ npm run dev
 
 Ese comando:
 
-- levanta el backend
-- levanta el frontend
-- deja Ollama apagado hasta que una tarea de IA realmente lo necesite
-- guarda un estado runtime para poder limpiar procesos colgados después
-- cuando hacés `Ctrl + C`, además del shutdown normal ejecuta la misma limpieza de `npm run cleanup`
+- levanta backend + frontend
+- deja Ollama apagado hasta que un job IA lo necesite
+- guarda estado runtime para limpiar procesos colgados después
+- al hacer `Ctrl + C`, ejecuta la misma limpieza que `npm run cleanup`
 
-Backend disponible en: [http://localhost:3001](http://localhost:3001)
-Frontend disponible en: [http://localhost:5173](http://localhost:5173)
+- Backend: [http://localhost:3001](http://localhost:3001)
+- Frontend: [http://localhost:5173](http://localhost:5173)
 
-En el frontend también se visualiza el contenido de `full_study_notes_es.txt` con una presentación estructurada, además de dejar el archivo disponible para abrir o descargar.
+El frontend también renderiza `full_study_notes_es.txt` con una presentación legible además de permitir abrir o descargar el archivo.
 
-Cuando iniciás un job que usa IA:
+### Runtime IA durante un job
+
+Cuando iniciás un job con IA:
 
 - el backend levanta Ollama on-demand
-- procesa con el modelo LLM activo configurado en la UI (o con el default del `.env` si nunca cambiaste la selección)
-- usa contexto separado para `full notes` y grounding
-- intenta reparar JSON localmente y con un contract repair antes de degradar una ventana
+- usa el modelo LLM activo configurado en la UI (o el default del `.env` si nunca cambiaste la selección)
+- separa contexto de `full notes` y grounding
+- intenta reparar JSON y ventanas flojas antes de degradar
 - si no quedan jobs activos, el runtime entra en `idle`
-- al terminar un job IA, se fuerza descarga del modelo para liberar RAM
-- tras `OLLAMA_IDLE_SHUTDOWN_MS`, se apaga el runtime como respaldo si sigue siendo propiedad de esta sesión
+- al terminar un job IA, fuerza unload del modelo para liberar RAM
+- tras `OLLAMA_IDLE_SHUTDOWN_MS`, apaga el runtime como respaldo si la sesión es dueña del proceso
 
 ### Limpieza de procesos
-
-Si te queda la máquina pesada después de pruebas manuales, grounding o un backend temporal:
 
 ```bash
 cd /ruta/a/video-summary
 npm run cleanup
 ```
 
-Ese script:
+Eso:
 
 - mata workers de grounding del proyecto
 - mata backends locales escuchando en `3001` y `3002`
 - apaga Ollama **solo si** esta sesión de `npm run dev` lo había levantado automáticamente
 
-Si querés forzar además el apagado de Ollama aunque no haya quedado marcado como iniciado por `npm run dev`:
+Si querés forzar también el apagado de Ollama aunque no haya sido levantado por `npm run dev`:
 
 ```bash
 npm run cleanup:all
 ```
 
-Tradeoff:
+**Tradeoff**
 
-- `cleanup` es más seguro si usás Ollama para otras cosas
-- `cleanup:all` libera más memoria, pero te baja todo el runtime local de Ollama
+- `cleanup`: más seguro si usás Ollama para otras cosas
+- `cleanup:all`: libera más memoria, pero te baja todo el runtime local de Ollama
 
 ### Comandos individuales
 
@@ -322,55 +411,13 @@ npm run dev:backend
 npm run dev:frontend
 ```
 
-## Flujo actual
+---
 
-### Visión general
-
-1. Elegís uno de estos modos de entrada:
-   - video único (`url`)
-   - lista manual (`urls`)
-   - playlist (`playlistUrl`)
-2. El backend crea un job en memoria y una carpeta local dentro de `output/job_<timestamp>`.
-3. Si es playlist, primero entra en `resolving_sources`, expande videos con `yt-dlp` y recién después crea los items del lote.
-4. Para `url_list` y `playlist`, el job padre procesa cada item en secuencia y mantiene artifacts/estado aislados por video.
-5. `yt-dlp` descarga y extrae el audio a `audio.mp3`.
-6. `ffmpeg` genera `audio_denoised.wav` con reducción de ruido, mono y 16 kHz.
-7. `ffmpeg` divide `audio_denoised.wav` en partes de 30 minutos dentro de `video_parts/`.
-8. Cada parte se vuelve a segmentar en subchunks más chicos para Whisper.
-9. `whisper.cpp` transcribe subchunk por subchunk, usando el idioma manual si lo cargás y un prompt con glosario.
-10. El backend fusiona los subchunks en `transcription_part_XXX.txt` y luego consolida todas las partes en `transcription.txt`.
-11. Si activás traducción y el video no está en español, el backend traduce la transcripción por chunks y consolida `translation_es.txt`; si ya está en español, reutiliza la transcripción como artifact final en español.
-12. Si activás resumen, Ollama genera una extracción exhaustiva por parte (`extraction_part_XXX.txt`) y luego consolida todo en `full_study_notes_es.txt`.
-13. El backend arma un `chunk_manifest.json`, un evidence pack con aliases de citas (`[C1]`, `[C2]`, etc.) y extrae claims estructurados por parte (`claims_part_XXX.json`).
-14. Un worker Python con LlamaIndex valida esos claims contra los chunks fuente y produce `grounding_report.json`.
-15. Si una ventana queda demasiado comprimida o con reasoning débil, entra el pipeline de recuperación semántica / thin reasoning para intentar reparar extracción, señales y grounding antes de degradar el resultado final.
-16. `validation_report.json` se mantiene como capa legacy de compatibilidad y debugging, pero ya no es la única fuente de validación del sistema.
-17. También se generan artefactos de estudio derivados: `outline_es.txt`, `key_concepts_es.txt`, `questions_es.txt` y `glossary_es.txt`.
-18. Todos los logs del proceso se escriben también en `logs.txt`, con `logs.txt` adicional por item cuando el job es batch.
-
-### Qué cambia entre single y batch
-
-- **single URL**: el job trabaja directo sobre una sola carpeta de salida
-- **url_list / playlist**: existe un job padre y cada video corre como `item_001`, `item_002`, etc.
-- **playlist**: primero pasa por `resolving_sources`
-- **batch**: los items corren secuencialmente, no en paralelo
-
-### Traducción al español
-
-- si el audio ya está en español → reutiliza la transcripción
-- si no está en español → traduce por chunks
-- artifacts principales:
-  - `translation_chunk_*`
-  - `translation_part_*`
-  - `translation_es.txt`
-
-## Endpoints
+## API
 
 ### `POST /api/jobs`
 
-#### Payload single
-
-Body:
+#### Modo single
 
 ```json
 {
@@ -383,7 +430,7 @@ Body:
 }
 ```
 
-#### Payload batch manual
+#### Lista manual
 
 ```json
 {
@@ -398,7 +445,7 @@ Body:
 }
 ```
 
-#### Payload playlist
+#### Playlist
 
 ```json
 {
@@ -410,15 +457,27 @@ Body:
 }
 ```
 
-> `generateTranscription` sigue existiendo en la API, aunque el procesamiento base necesita transcribir para habilitar traducción y resumen.
-> `language` queda como alias legacy. Lo recomendado es usar `transcriptionLanguage` para el idioma del audio (`auto`, `en`, `es`, `ja`, `English`, `Español`, etc.) y `outputLanguage` para el idioma final consumible.
-> `reuseFromJobId` solo está soportado para jobs de URL única en esta versión.
+**Notas**
+
+- `generateTranscription` sigue existiendo, aunque el pipeline base necesita transcribir para traducción y resumen.
+- `language` queda como alias legacy temporal.
+- lo recomendado es usar:
+  - `transcriptionLanguage` = idioma del audio (`auto`, `en`, `es`, `ja`, etc.)
+  - `outputLanguage` = idioma final consumible (`es` por defecto)
+- `reuseFromJobId` solo está soportado para jobs de URL única en esta versión.
 
 ### `GET /api/jobs/:id`
 
-#### Estados posibles
+Devuelve:
 
-Devuelve el estado actual del job:
+- estado del job
+- archivos detectados
+- logs truncados a las últimas líneas
+- `logCount`
+- `logsTruncated`
+- error si aplica
+
+#### Estados posibles
 
 - `pending`
 - `queued`
@@ -434,18 +493,9 @@ Devuelve el estado actual del job:
 - `completed_with_warnings`
 - `failed`
 
-#### Respuesta incluye
+### `GET /api/jobs/:id/logs?tail=200`
 
-- estado del job
-- archivos detectados
-- `logs` truncados a las últimas líneas
-- `logCount`
-- `logsTruncated`
-- error si aplica
-
-#### Logs adicionales
-
-- `GET /api/jobs/:id/logs?tail=200`
+Devuelve logs extendidos del job.
 
 ### `POST /api/jobs/:id/cancel`
 
@@ -453,25 +503,25 @@ Solicita la cancelación del job.
 
 #### Comportamiento actual
 
-- si el job todavía está en `pending`, se saca de la cola y pasa a `cancelled`
-- si el job está en `queued` o `resolving_sources`, se cancela sin ejecutar pipeline de item
-- si el job ya está corriendo, pasa a `cancelling`, se abortan requests activos y se fuerza apagado/unload del runtime IA cuando corresponde
-- si ya terminó, devuelve el job en su estado final sin hacer nada extra
+- si está en `pending`, sale de la cola y pasa a `cancelled`
+- si está en `queued` o `resolving_sources`, se cancela antes de ejecutar el pipeline
+- si ya está corriendo, pasa a `cancelling`, aborta requests activos y fuerza stop/unload del runtime cuando corresponde
+- si ya terminó, devuelve el job con su estado final sin hacer nada extra
 
 ### `GET /api/health`
 
-Devuelve el estado del runtime local de IA, por ejemplo:
+Devuelve estado del runtime IA, por ejemplo:
 
 - `aiRuntime`
 - `ownedByCurrentSession`
 - `activeJobsCount`
 - `ollamaModel`
 - `idleShutdownMs`
-- timestamps de actividad/apagado programado cuando aplican
+- timestamps de actividad / apagado programado
 
 ### `GET /api/system/memory`
 
-Devuelve memoria aproximada del host para la UI operativa:
+Devuelve memoria aproximada del host:
 
 - `totalMb`
 - `usedMb`
@@ -480,12 +530,12 @@ Devuelve memoria aproximada del host para la UI operativa:
 
 ### `GET /api/models`
 
-Lista los modelos locales detectados en Ollama a través de `/api/tags`.
+Lista modelos locales detectados desde `Ollama /api/tags`.
 
-#### Notas
+**Notas**
 
-- el endpoint puede devolver también embeddings
-- los embeddings salen marcados como `selectable=false`
+- puede incluir embeddings
+- los embeddings salen como `selectable=false`
 - el frontend solo deja elegir modelos aptos como LLM principal
 
 ### `GET /api/model-selection`
@@ -507,26 +557,21 @@ Cambia el modelo LLM principal global para **jobs futuros**.
 
 - persiste la selección en `.runtime/model-selection.json`
 - valida que el modelo exista en Ollama local
-- no deja cambiarlo mientras haya jobs IA activos (`409`)
-- no toca el modelo de embeddings ni Whisper
+- devuelve `409` si hay jobs IA activos
+- no toca embeddings ni Whisper
 
-### `GET /api/jobs/:id/files`
+### Files
 
-Lista los archivos generados para ese trabajo.
+- `GET /api/jobs/:id/files`
+- `GET /api/jobs/:id/files/:filename`
+- `GET /api/jobs/:id/items/:itemId/files`
+- `GET /api/jobs/:id/items/:itemId/files/:filename`
 
-### `GET /api/jobs/:id/files/:filename`
+Los endpoints por item evitan colisiones entre archivos repetidos como `summary_es.txt`, `grounding_report.json`, etc.
 
-Entrega el archivo para verlo o descargarlo.
+---
 
-### `GET /api/jobs/:id/items/:itemId/files`
-
-Lista los archivos del item seleccionado dentro de un job batch.
-
-### `GET /api/jobs/:id/items/:itemId/files/:filename`
-
-Entrega un archivo scoped al item para evitar colisiones entre varios `summary_es.txt`, `grounding_report.json`, etc.
-
-## Estructura de salida
+## Outputs y artifacts
 
 ### Ejemplo single URL
 
@@ -536,23 +581,22 @@ output/
     job.json
     audio.mp3
     audio_denoised.wav
+    transcription_part_001.txt
+    transcription.txt
     translation_chunk_001_001.txt
     translation_chunk_001_002.txt
     translation_part_001.txt
-    transcription_part_001.txt
+    translation_es.txt
     extraction_part_001.txt
-    transcription.txt
+    full_study_notes_es.txt
     chunk_manifest.json
     claims_part_001.json
     evidence_part_001.json
     evidence_pack_part_001.md
     citation_integrity_part_001.json
-    full_study_notes_es.txt
-    translation_es.txt
-    summary_es.txt
-    validation_report.json
     grounding_report.json
     grounding_worker_report.json
+    validation_report.json
     outline_es.txt
     key_concepts_es.txt
     questions_es.txt
@@ -588,129 +632,110 @@ output/
       grounding_report.json
 ```
 
-### Artifacts adicionales de recuperación semántica
+### Artifacts de recovery semántico
 
-Cuando entran ventanas con recuperación semántica/thin reasoning, pueden aparecer artifacts por ventana como:
+Cuando entra thin reasoning / recovery por ventanas, pueden aparecer:
 
 - `thin_reasoning_eval_W*.json`
 - `reasoning_resolved_changes_W*.json`
 - `controlled_rewrite_W*.json`
 - `evidence_hints_W*.json`
 
-## Decisiones técnicas actuales
+---
+
+## Decisiones técnicas
 
 ### Arquitectura y operación
 
-- **Sin base de datos**: toda la metadata principal vive en archivos locales (`output/job_xxx/job.json`, `logs.txt`, reports JSON/TXT) y el proceso también mantiene un mapa en memoria para servir la UI.
-- **Recuperación al reiniciar**: al boot, el backend relee `job.json` desde `/output`; si encuentra jobs que quedaron a mitad de ejecución, los marca como `failed` por reinicio del servidor en lugar de “olvidarlos”.
-- **Cola simple en memoria**: procesa un job por vez para evitar mezclar stdout/stderr y simplificar el flujo local; dentro de un batch, los items corren secuencialmente.
-- **Cancelación cooperativa**: la cancelación usa `AbortController`, corta requests activos y fuerza stop/unload del runtime cuando corresponde.
-- **`spawn` en vez de `execFile`**: permite leer logs en tiempo real desde `stdout` y `stderr`.
-- **Transcripción local optimizada para Mac**: se usa `whisper.cpp` con `whisper-cli`, modelo `large-v3`, prompt con glosario y denoise previo en `ffmpeg`.
-- **Procesamiento jerárquico**: primero parte el video en bloques de 30 minutos y recién después transcribe cada parte en subchunks más chicos.
-- **Extracción exhaustiva local con Ollama**: se generan `extraction_part_XXX.txt` con formato explicativo por temas y luego se consolidan en `full_study_notes_es.txt`.
-- **Grounding por claims con citas**: cada extracción parcial genera claims estructurados y se valida contra chunks reales de la transcripción usando LlamaIndex; el resultado principal queda en `grounding_report.json`.
-- **Recovery por ventanas**: si una ventana sale con schema roto, drift, low content o thin reasoning, el backend puede intentar contract repair, strict re-emit, semantic enrichment, preserve previous extraction y fallback controlado.
-- **Thin reasoning chain**: el pipeline puede correr planner → critique → resolve → controlled rewrite con hints derivados de evidencia para intentar rescatar ventanas comprimidas sin inventar contenido.
-- **Fallback legacy**: `validation_report.json` sigue existiendo como red de seguridad y compatibilidad temporal, pero hoy convive con `grounding_report.json` y artifacts de recuperación más ricos.
-- **Runtime IA on-demand**: Ollama no se levanta al abrir la app; se inicia solo cuando un job con `generateSummary=true` o `generateTranslation=true` lo necesita, queda en `idle` al terminar y puede apagarse solo para liberar RAM.
-- **Selector global de modelo**: el LLM principal se elige desde la UI, se persiste en `.runtime/model-selection.json` y se congela en `job.modelMetadata` al inicio de cada job para que el histórico siga siendo comparable.
-- **Traducción chunked al español**: si el video no está en español, `translateToSpanish()` reutiliza los `transcription_chunk_*`, traduce cada fragmento con Ollama, consolida `translation_part_*` y finalmente genera `translation_es.txt` con escritura atómica y reanudación segura.
+- **Sin base de datos**: la metadata vive en archivos locales (`job.json`, `logs.txt`, reports JSON/TXT) y además en un mapa en memoria para servir la UI.
+- **Recuperación al reiniciar**: al boot, el backend relee `output/job_xxx/job.json` y marca jobs interrumpidos como `failed` por reinicio del servidor.
+- **Cola simple en memoria**: procesa un job por vez para simplificar runtime y logs; dentro de un batch, los items corren secuencialmente.
+- **Cancelación cooperativa**: usa `AbortController`, corta requests activos y fuerza stop/unload del runtime cuando corresponde.
+- **`spawn` en vez de `execFile`**: permite logs en tiempo real desde `stdout` y `stderr`.
+- **Transcripción local optimizada para Mac**: `whisper.cpp` + `large-v3` + glosario + denoise previo.
+- **Procesamiento jerárquico**: primero divide el video en partes grandes y después en subchunks de ASR.
+- **Extracción exhaustiva local con Ollama**: genera `extraction_part_XXX.txt` y consolida `full_study_notes_es.txt`.
+- **Grounding por claims con citas**: valida soporte real usando LlamaIndex sobre chunks fuente.
+- **Recovery por ventanas**: puede intentar contract repair, strict re-emit, semantic enrichment y fallback controlado.
+- **Thin reasoning chain**: planner → critique → resolve → controlled rewrite con hints evidence-driven.
+- **Fallback legacy**: `validation_report.json` sigue como red de seguridad y compatibilidad temporal.
+- **Runtime IA on-demand**: Ollama no vive siempre arriba; se levanta solo si un job lo necesita.
+- **Selector global de modelo**: la UI persiste el modelo activo en `.runtime/model-selection.json` y cada job congela su metadata de modelo al iniciar.
+- **Traducción chunked al español**: si el video no está en español, reutiliza `transcription_chunk_*`, traduce cada fragmento con Ollama y consolida `translation_es.txt` con escritura atómica y reanudación segura.
+
+---
 
 ## Archivos clave
 
 ### Backend
 
-- `backend/src/index.ts`
-  - arranque del backend
-  - health
-  - routers
-  - inicialización de selección de modelo
-- `backend/src/services/jobQueue.ts`
-  - cola secuencial
-  - persistencia de `job.json`
-  - restauración al reiniciar
-  - cancelación
-- `backend/src/services/aiRuntimeManager.ts`
-  - boot/shutdown de Ollama on-demand
-  - idle shutdown
-  - unload del modelo
-- `backend/src/services/modelSelectionService.ts`
-  - selector global del modelo LLM principal
-  - persistencia en `.runtime/model-selection.json`
-  - validación contra `/api/tags`
-- `backend/src/services/videoProcessor.ts`
-  - download + denoise + transcripción + resumen
-  - opik trace raíz
-  - monitoreo de recursos
-- `backend/src/services/ollamaClient.ts`
-  - llamadas a Ollama
-  - continuations
-  - spans LLM
-- `backend/src/services/studyGroundingPipeline.ts`
-  - chunk manifest
-  - claims
-  - grounding report
-  - consolidation por parte
-- `backend/src/services/claimExtraction.ts`
-  - extracción de claims estructurados desde ventanas
-- `backend/src/services/groundingService.ts`
-  - `generateGroundingReport()`
-- `backend/src/services/windowRecoveryService.ts`
-  - resolución de ventanas rotas o comprimidas
-- `backend/src/services/semanticEnrichmentService.ts`
-  - intento de enriquecimiento semántico cuando una ventana queda floja
-- `backend/src/services/thinReasoningChainService.ts`
-  - planner / critique / resolve / controlled rewrite
-- `backend/src/services/evidenceDerivedPromptHintsService.ts`
-  - hints evidence-driven para planner/resolve
-- `backend/grounding_worker/grounding_worker.py`
-  - valida claims contra chunks con LlamaIndex
-- `backend/src/services/videoPartitioner.ts`
-  - `partitionVideoAudio()`
-- `backend/src/services/studyExtraction.ts`
-  - `generateExtractionForPart()`
-  - `consolidateExtractions()`
+| Archivo | Responsabilidad |
+| --- | --- |
+| `backend/src/index.ts` | arranque del backend, health, routers, inicialización de selección de modelo |
+| `backend/src/services/jobQueue.ts` | cola secuencial, persistencia de `job.json`, restauración al reiniciar, cancelación |
+| `backend/src/services/aiRuntimeManager.ts` | boot/shutdown de Ollama on-demand, idle shutdown, unload del modelo |
+| `backend/src/services/modelSelectionService.ts` | selector global del LLM principal y persistencia en `.runtime/model-selection.json` |
+| `backend/src/services/videoProcessor.ts` | download, denoise, transcripción, traducción, extracción, trazas raíz y monitoreo |
+| `backend/src/services/ollamaClient.ts` | llamadas a Ollama, continuations, spans LLM |
+| `backend/src/services/studyGroundingPipeline.ts` | chunk manifest, claims, evidence packs y grounding report |
+| `backend/src/services/claimExtraction.ts` | extracción de claims estructurados |
+| `backend/src/services/groundingService.ts` | `generateGroundingReport()` |
+| `backend/src/services/windowRecoveryService.ts` | resolución de ventanas rotas o comprimidas |
+| `backend/src/services/semanticEnrichmentService.ts` | enriquecimiento semántico cuando una ventana queda floja |
+| `backend/src/services/thinReasoningChainService.ts` | planner / critique / resolve / controlled rewrite |
+| `backend/src/services/evidenceDerivedPromptHintsService.ts` | hints evidence-driven para planner y resolve |
+| `backend/grounding_worker/grounding_worker.py` | validación de claims contra chunks con LlamaIndex |
+| `backend/src/services/videoPartitioner.ts` | `partitionVideoAudio()` |
+| `backend/src/services/studyExtraction.ts` | `generateExtractionForPart()` y `consolidateExtractions()` |
 
 ### Frontend
 
-- `frontend/src/App.tsx`
-  - polling
-  - carga de reports
-  - wiring general de la UI
-- `frontend/src/presentation.ts`
-  - derivación de health operativo del job y prioridad visual
-- `frontend/src/components/AiRuntimeBanner.tsx`
-  - estado del runtime
-  - selector global de modelo
-- `frontend/src/components/SystemMemoryWidget.tsx`
-  - memoria aproximada del host para operación local
-- `frontend/src/components/GroundingSummary.tsx`
-  - lectura del grounding moderno
-- `frontend/src/components/JobStatus.tsx`
-  - resumen operativo del lote
-  - selector de item
-  - metadata técnica expandible
-- `frontend/src/components/ValidationSummary.tsx`
-  - lectura del reporte legacy
-- `frontend/src/components/JobResourceUsagePanel.tsx`
-  - RAM/CPU/procesos del job
+| Archivo | Responsabilidad |
+| --- | --- |
+| `frontend/src/App.tsx` | polling, carga de reports, wiring general |
+| `frontend/src/presentation.ts` | health operativo del job y prioridad visual |
+| `frontend/src/components/AiRuntimeBanner.tsx` | estado del runtime y selector global de modelo |
+| `frontend/src/components/SystemMemoryWidget.tsx` | memoria aproximada del host |
+| `frontend/src/components/GroundingSummary.tsx` | lectura del grounding moderno |
+| `frontend/src/components/JobStatus.tsx` | resumen operativo del lote, selector de item y metadata técnica |
+| `frontend/src/components/ValidationSummary.tsx` | lectura del reporte legacy |
+| `frontend/src/components/JobResourceUsagePanel.tsx` | RAM/CPU/procesos del job |
+
+---
 
 ## Limitaciones actuales
 
 - La cola es secuencial y deliberadamente simple.
 - La cancelación existe, pero el modelo de ejecución sigue siendo local y no distribuido.
-- La traducción larga depende del modelo local activo y, al hacerse por chunks, puede tener pequeñas variaciones terminológicas entre fragmentos.
-- La selección actual del modelo LLM principal es global; no existe todavía selección per-job ni perfiles tipo `fast/balanced/quality`.
-- El modelo de embeddings para grounding sigue separado y no se selecciona desde la UI.
-- YouTube puede responder con `HTTP 429` en algunos intentos de `yt-dlp`; cuando pasa, el job falla y conviene reintentar.
-- El pipeline de recovery semántico/thin reasoning mejora observabilidad y rescate de ventanas, pero todavía puede dejar partes en `completed_with_warnings` o `needs_review` según el caso.
-- El resumen depende bastante del modelo local configurado, del tiempo de respuesta de Ollama y de la memoria disponible de la máquina.
+- La traducción larga depende del modelo local activo y puede dejar pequeñas variaciones terminológicas entre chunks.
+- La selección del LLM principal es global; no existe todavía selección per-job ni perfiles `fast/balanced/quality`.
+- El modelo de embeddings para grounding sigue separado y no se elige desde la UI.
+- YouTube puede responder con `HTTP 429` en algunos intentos de `yt-dlp`; cuando pasa, conviene reintentar.
+- El pipeline de recovery semántico/thin reasoning mejoró mucho, pero todavía puede dejar partes en `completed_with_warnings` o `needs_review`.
+- El resultado final depende bastante del modelo local configurado, del tiempo de respuesta de Ollama y de la memoria disponible de la máquina.
 
-## Próximos pasos razonables
+---
+
+## Próximos pasos
 
 1. Mejorar streaming de progreso al frontend con SSE o WebSockets.
-2. Afinar thresholds de grounding y decisión por claim con casos reales.
-3. Seguir endureciendo el pipeline de thin reasoning / recovery para reducir `completed_with_warnings`.
-4. Si más adelante lo necesitás, separar la selección de LLM principal, embeddings y perfiles de inferencia sin mezclar responsabilidades en una sola UI.
+2. Afinar thresholds de grounding y decisión por claim con más casos reales.
+3. Seguir endureciendo thin reasoning / recovery para bajar `completed_with_warnings`.
+4. Separar más adelante la selección de LLM principal, embeddings y perfiles de inferencia sin mezclar responsabilidades.
 5. Si aparecen inconsistencias terminológicas entre chunks traducidos, agregar una pasada liviana de normalización post-traducción.
+
+---
+
+## Idea central del proyecto
+
+El foco no es solo “resumir un video”.
+
+El foco REAL es construir un pipeline local que produzca texto en español **usable para estudiar**, con evidencia, grounding, trazabilidad y capacidad de auditoría.
+
+Eso implica una decisión de producto bien concreta:
+
+- primero confiabilidad
+- después velocidad
+- siempre artifacts inspeccionables
+
+Y sí, eso hace al sistema más complejo. Pero también lo hace MUCHO más honesto.
