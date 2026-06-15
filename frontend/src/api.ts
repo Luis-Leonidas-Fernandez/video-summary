@@ -1,33 +1,59 @@
 export type JobStatus =
   | 'pending'
-  | 'cancelling'
-  | 'cancelled'
+  | 'queued'
+  | 'resolving_sources'
+  | 'processing'
   | 'downloading'
   | 'transcribing'
   | 'translating'
   | 'summarizing'
+  | 'cancelling'
+  | 'cancelled'
   | 'completed'
   | 'completed_with_warnings'
   | 'failed';
 
+export type ItemStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'warning';
 export type JobLanguage = string;
+export type JobInputMode = 'single_url' | 'url_list' | 'playlist';
+export type BatchFailurePolicy = 'continue_on_item_failure' | 'fail_fast';
+export type TranscriptionQuality = 'ok' | 'suspicious' | 'poor';
+export type GroundingStatus = 'grounded' | 'partially_grounded' | 'failed_grounding' | 'needs_human_review' | 'too_compressed' | 'legacy_warning' | 'unknown';
+export type ResourceUsageScope = 'batch_aggregate' | 'last_item' | 'single_item';
+export type TranslationStatus = 'reused_spanish_transcription' | 'translated_to_spanish' | 'skipped';
 
-export interface CreateJobPayload {
-  url: string;
-  language: JobLanguage;
+export type CreateJobPayload = {
+  language?: JobLanguage;
+  transcriptionLanguage?: JobLanguage;
+  outputLanguage?: JobLanguage;
   generateTranscription: boolean;
   generateTranslation: boolean;
   generateSummary: boolean;
   speakerCountHint?: number;
   reuseFromJobId?: string;
+} & (
+  | { url: string; urls?: never; playlistUrl?: never }
+  | { url?: never; urls: string[]; playlistUrl?: never }
+  | { url?: never; urls?: never; playlistUrl: string }
+);
+
+export interface JobOriginalInput {
+  url?: string;
+  urls?: string[];
+  playlistUrl?: string;
 }
 
 export interface JobFile {
+  itemId?: string;
   name: string;
+  filename: string;
+  relativePath: string;
   path: string;
   size: number;
   createdAt: string;
   downloadUrl: string;
+  mimeType?: string;
+  kind?: 'transcript' | 'summary' | 'grounding' | 'audio' | 'video' | 'log' | 'report' | 'other';
 }
 
 export interface JobResourceUsage {
@@ -48,13 +74,64 @@ export interface JobModelMetadata {
   modelSelectionSource: ModelSelectionSource;
 }
 
+export interface BatchJobItem {
+  itemId: string;
+  index: number;
+  sourceUrl: string;
+  normalizedUrl: string;
+  sourceType: 'single' | 'batch_list' | 'playlist';
+  status: ItemStatus;
+  outputDir: string;
+  files: JobFile[];
+  error?: string;
+  warnings?: string[];
+  progress?: number;
+  startedAt?: string;
+  completedAt?: string;
+  itemWallClockMs?: number;
+  currentStage?: 'pending' | 'processing' | 'downloading' | 'transcribing' | 'translating' | 'summarizing';
+  resourceUsage?: JobResourceUsage;
+  transcriptionQuality?: TranscriptionQuality;
+  groundingStatus?: GroundingStatus;
+  groundingDecisionReason?: string;
+  detectedSourceLanguage?: string;
+  translationStatus?: TranslationStatus;
+  claimsValidated?: number;
+  unsupportedClaimCount?: number;
+  invalidCitationCount?: number;
+  windowsTooCompressed?: number;
+}
+
+export interface JobBatchSummary {
+  totalItems: number;
+  completedItems: number;
+  failedItems: number;
+  cancelledItems: number;
+  pendingItems: number;
+  warningItems: number;
+  activeItemId?: string;
+}
+
 export interface JobResponse {
+  schemaVersion?: number;
   id: string;
   createdAt: string;
   updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  batchWallClockMs?: number;
+  resourceUsageScope?: ResourceUsageScope;
   status: JobStatus;
   url: string;
+  inputMode?: JobInputMode;
+  originalInput?: JobOriginalInput;
+  sourceUrls?: string[];
+  resolvedAt?: string;
+  resolutionError?: string;
+  failurePolicy?: BatchFailurePolicy;
   language: JobLanguage;
+  transcriptionLanguage: JobLanguage;
+  outputLanguage: JobLanguage;
   generateTranscription: boolean;
   generateTranslation: boolean;
   generateSummary: boolean;
@@ -62,11 +139,15 @@ export interface JobResponse {
   reusedFromJobId?: string;
   outputDir: string;
   files: JobFile[];
+  items?: BatchJobItem[];
+  summary?: JobBatchSummary;
   logs: string[];
   logCount: number;
   logsTruncated: boolean;
   resourceUsage?: JobResourceUsage;
   modelMetadata?: JobModelMetadata;
+  detectedSourceLanguage?: string;
+  translationStatus?: TranslationStatus;
   error?: string;
   progress?: number;
 }
@@ -203,48 +284,20 @@ export interface GroundingReportPart {
     parseError?: string;
     rawInvalidOutputPath?: string;
     recoveredJsonPath?: string;
+    finalStatus?: 'accepted' | 'accepted_with_warnings' | 'needs_review';
     fallbackExtraction?: boolean;
-    finalStatus: 'grounded' | 'partially_grounded' | 'needs_review';
-    decisionReason: string;
-    noteBlockCount: number;
-    extractionWordCount: number;
+    decisionReason?: string;
     coverage: {
-      windowId: string;
+      status: 'ok' | 'too_compressed' | 'very_detailed' | 'too_verbose' | 'needs_review';
       inputWords: number;
       outputWords: number;
-      outputToInputRatio: number;
-      noteBlocksCount: number;
-      status: 'too_compressed' | 'ok' | 'very_detailed' | 'too_verbose' | 'needs_review';
     };
   }>;
-  avgWordsPerWindow: number;
   windowsTooCompressed: number;
-  windowsVeryDetailed: number;
-  windowsTooVerbose: number;
   fallbackRate?: number;
-  recoveryMetrics?: {
-    windowsRecoveredLocally: number;
-    windowsRecoveredByContractRepair: number;
-    windowsRecoveredByStrictReemit: number;
-    windowsPreservedAfterRepairFailure: number;
-    windowsFellBack: number;
-  };
   rejectedWindowMetrics?: {
-    languageDrift: number;
-    lowContent: number;
-    thinReasoning: number;
-    closurePollution: number;
-    singleIdeaCollapse: number;
-    schemaBroken: number;
-    fallbackLike: number;
-    mixedMarkdownJson: number;
-    alternateSchema: number;
-    unknown: number;
-  };
-  semanticRecoveryMetrics?: {
-    windowsEnrichmentAttempted: number;
-    windowsEnrichedSemantically: number;
-    windowsStillCompressedAfterEnrichment: number;
+    schemaBroken?: number;
+    thinReasoning?: number;
   };
   finalStatus: 'grounded' | 'partially_grounded' | 'failed_grounding' | 'needs_human_review' | 'too_compressed';
   decisionReason: string;
@@ -254,28 +307,14 @@ export interface GroundingReport {
   parts: GroundingReportPart[];
   performanceSummary?: {
     ramPeakTrackedMb: number;
-    ramPeakSystemApproxMb?: number;
-    fullNotesDurationMs: number;
-    groundingDurationMs: number;
-    unsupportedClaimCount: number;
-    windowsTooCompressed: number;
   };
 }
-
-export type AiRuntimeStatus =
-  | 'offline'
-  | 'starting'
-  | 'ready'
-  | 'busy'
-  | 'idle'
-  | 'stopping'
-  | 'error';
 
 export interface HealthResponse {
   ok: true;
   ollamaBaseUrl: string;
   ollamaModel: string;
-  aiRuntime: AiRuntimeStatus;
+  aiRuntime: 'offline' | 'starting' | 'ready' | 'busy' | 'idle' | 'stopping' | 'error';
   ownedByCurrentSession: boolean;
   activeJobsCount: number;
   idleShutdownMs: number;
@@ -283,79 +322,82 @@ export interface HealthResponse {
   nextShutdownAt?: string;
 }
 
-async function parseJson<T>(response: Response): Promise<T> {
+export interface SystemMemoryResponse {
+  totalMb: number;
+  usedMb: number;
+  freeMb: number;
+  usedPercent: number;
+}
+
+async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
+  const response = await fetch(input, init);
   if (!response.ok) {
-    const error = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(error?.error ?? 'Ocurrió un error inesperado en la API.');
+    const message = await response.text();
+    throw new Error(message || `Request failed with status ${response.status}`);
   }
 
   return response.json() as Promise<T>;
 }
 
 export async function createJob(payload: CreateJobPayload): Promise<JobResponse> {
-  const response = await fetch('/api/jobs', {
+  return fetchJson<JobResponse>('/api/jobs', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-
-  return parseJson<JobResponse>(response);
 }
 
 export async function getJob(jobId: string): Promise<JobResponse> {
-  const response = await fetch(`/api/jobs/${jobId}`);
-  return parseJson<JobResponse>(response);
+  return fetchJson<JobResponse>(`/api/jobs/${jobId}`);
 }
 
-export async function getJobFiles(jobId: string): Promise<JobFile[]> {
-  const response = await fetch(`/api/jobs/${jobId}/files`);
-  return parseJson<JobFile[]>(response);
+export async function getJobFiles(jobId: string, itemId?: string): Promise<JobFile[]> {
+  const endpoint = itemId
+    ? `/api/jobs/${jobId}/items/${encodeURIComponent(itemId)}/files`
+    : `/api/jobs/${jobId}/files`;
+  return fetchJson<JobFile[]>(endpoint);
 }
 
-export async function getJobFileContent(jobId: string, fileName: string): Promise<string> {
-  const response = await fetch(`/api/jobs/${jobId}/files/${encodeURIComponent(fileName)}`);
-
+export async function getJobFileContent(jobId: string, filename: string, itemId?: string): Promise<string> {
+  const encodedFilename = encodeURIComponent(filename);
+  const endpoint = itemId
+    ? `/api/jobs/${jobId}/items/${encodeURIComponent(itemId)}/files/${encodedFilename}`
+    : `/api/jobs/${jobId}/files/${encodedFilename}`;
+  const response = await fetch(endpoint);
   if (!response.ok) {
-    const error = (await response.json().catch(() => null)) as { error?: string } | null;
-    throw new Error(error?.error ?? 'No se pudo leer el archivo solicitado.');
+    const message = await response.text();
+    throw new Error(message || `File request failed with status ${response.status}`);
   }
-
   return response.text();
 }
 
+export async function cancelJob(jobId: string): Promise<JobResponse> {
+  return fetchJson<JobResponse>(`/api/jobs/${jobId}/cancel`, {
+    method: 'POST',
+  });
+}
+
 export async function getHealth(): Promise<HealthResponse> {
-  const response = await fetch('/api/health');
-  return parseJson<HealthResponse>(response);
+  return fetchJson<HealthResponse>('/api/health');
+}
+
+export async function getAvailableModels(): Promise<LocalModelInfo[]> {
+  return fetchJson<LocalModelInfo[]>('/api/models');
 }
 
 export async function getModelSelection(): Promise<ModelSelectionResponse> {
-  const response = await fetch('/api/model-selection');
-  return parseJson<ModelSelectionResponse>(response);
-}
-
-export async function getModels(): Promise<LocalModelInfo[]> {
-  const response = await fetch('/api/models');
-  return parseJson<LocalModelInfo[]>(response);
+  return fetchJson<ModelSelectionResponse>('/api/model-selection');
 }
 
 export async function updateModelSelection(model: string): Promise<ModelSelectionResponse> {
-  const response = await fetch('/api/model-selection', {
+  return fetchJson<ModelSelectionResponse>('/api/model-selection', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ model }),
   });
-
-  return parseJson<ModelSelectionResponse>(response);
 }
 
-export async function cancelJob(jobId: string): Promise<JobResponse> {
-  const response = await fetch(`/api/jobs/${jobId}/cancel`, {
-    method: 'POST',
-  });
 
-  return parseJson<JobResponse>(response);
+export async function getSystemMemory(): Promise<SystemMemoryResponse> {
+  return fetchJson<SystemMemoryResponse>('/api/system/memory');
 }
