@@ -5,6 +5,7 @@ process.env.OPIK_PROJECT_NAME = process.env.OPIK_PROJECT_NAME ?? 'video-summary'
 process.env.OPIK_WORKSPACE = process.env.OPIK_WORKSPACE ?? 'default';
 
 import './config.js';
+import os from 'node:os';
 import cors from 'cors';
 import express from 'express';
 import { appConfig } from './config.js';
@@ -27,6 +28,14 @@ app.use(express.json());
 
 app.get('/api/health', async (_req, res) => {
   res.json(await getHealthResponse());
+});
+
+app.get('/api/system/memory', (_req, res) => {
+  const totalMb = Math.round(os.totalmem() / (1024 * 1024));
+  const freeMb = Math.round(os.freemem() / (1024 * 1024));
+  const usedMb = totalMb - freeMb;
+  const usedPercent = Math.round((usedMb / totalMb) * 100);
+  res.json({ totalMb, usedMb, freeMb, usedPercent });
 });
 
 app.use('/api', modelSelectionRouter);

@@ -1,7 +1,7 @@
 import { aiRuntimeManager } from './aiRuntimeManager.js';
 
-export function jobRequiresAi(generateSummary: boolean): boolean {
-  return generateSummary;
+export function jobRequiresAi(generateSummary: boolean, generateTranslation: boolean): boolean {
+  return generateSummary || generateTranslation;
 }
 
 export async function runWithAiRuntime<T>(

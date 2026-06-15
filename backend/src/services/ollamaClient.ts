@@ -120,8 +120,10 @@ function isJsonOutputComplete(text: string): boolean {
   }
 }
 
+const THINKING_CAPABLE_MODELS = /qwen|deepseek|gpt-oss|gemma4/i
+
 function supportsThinkingToggle(model: string): boolean {
-  return /qwen|deepseek|gpt-oss/i.test(model)
+  return THINKING_CAPABLE_MODELS.test(model)
 }
 
 export async function completeOllamaResponse({

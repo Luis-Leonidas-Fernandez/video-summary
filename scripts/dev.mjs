@@ -1,6 +1,13 @@
 import { spawn } from 'node:child_process';
 import { cleanupRuntime, persistDevState } from './runtime-control.mjs';
 
+const OLLAMA_URL = 'http://127.0.0.1:11434/api/tags';
+const BACKEND_URL = 'http://127.0.0.1:3001/api/health';
+const OLLAMA_REACHABILITY_TIMEOUT_MS = 2_000;
+const OLLAMA_STARTUP_WAIT_MS = 15_000;
+const BACKEND_STARTUP_WAIT_MS = 15_000;
+const OLLAMA_POLL_INTERVAL_MS = 400;
+
 const children = [];
 
 function log(message) {
@@ -64,11 +71,74 @@ function shutdown(exitCode = 0) {
 process.on('SIGINT', () => shutdown(0));
 process.on('SIGTERM', () => shutdown(0));
 
+async function isOllamaReachable() {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OLLAMA_REACHABILITY_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(OLLAMA_URL, { signal: controller.signal });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function waitFor(url, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), OLLAMA_REACHABILITY_TIMEOUT_MS);
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeout);
+      if (response.ok) {
+        return true;
+      }
+    } catch {
+      // not ready yet
+    }
+    await new Promise((resolve) => setTimeout(resolve, OLLAMA_POLL_INTERVAL_MS));
+  }
+
+  return false;
+}
+
+async function waitForOllama() {
+  return waitFor(OLLAMA_URL, OLLAMA_STARTUP_WAIT_MS);
+}
+
 async function main() {
-  persistDevState({ ollamaStartedByDev: false, ollamaStartedByBackend: false });
+  const ollamaAlreadyRunning = await isOllamaReachable();
+
+  persistDevState({
+    ollamaStartedByDev: !ollamaAlreadyRunning,
+    ollamaStartedByBackend: false,
+  });
+
+  if (ollamaAlreadyRunning) {
+    log('Ollama ya está corriendo. Usando instancia externa.');
+  } else {
+    log('Levantando Ollama...');
+    spawnManagedProcess('ollama', 'ollama', ['serve'], { stdio: 'ignore' });
+
+    const ready = await waitForOllama();
+    if (!ready) {
+      log('Ollama no quedó disponible a tiempo. Continuando igual...');
+    } else {
+      log('Ollama listo.');
+    }
+  }
 
   log('Levantando backend...');
   spawnManagedProcess('backend', 'npm', ['--prefix', 'backend', 'run', 'dev']);
+
+  const backendReady = await waitFor(BACKEND_URL, BACKEND_STARTUP_WAIT_MS);
+  if (!backendReady) {
+    log('Backend no quedó disponible a tiempo. Continuando igual...');
+  }
 
   log('Levantando frontend...');
   spawnManagedProcess('frontend', 'npm', ['--prefix', 'frontend', 'run', 'dev']);

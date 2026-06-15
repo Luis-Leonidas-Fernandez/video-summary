@@ -258,6 +258,8 @@ class AiRuntimeManager {
         ...process.env,
         OLLAMA_NUM_PARALLEL: String(appConfig.ollamaNumParallel),
         OLLAMA_MAX_LOADED_MODELS: String(appConfig.ollamaMaxLoadedModels),
+        OLLAMA_FLASH_ATTENTION: '1',
+        OLLAMA_KV_CACHE_TYPE: 'q8_0',
       },
     });
 

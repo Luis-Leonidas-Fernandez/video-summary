@@ -69,8 +69,14 @@ export function SummaryPreview({ content, isLoading }: SummaryPreviewProps) {
   flushBullets();
 
   return (
-    <section className="panel">
-      <h2>Material de estudio generado</h2>
+    <section className="panel reader-panel">
+      <div className="panel-header panel-header-top">
+        <div>
+          <p className="eyebrow">Resultado principal</p>
+          <h2>Material de estudio generado</h2>
+          <p className="panel-caption">Vista de lectura limpia para revisar el output final sin meterte enseguida en los JSON.</p>
+        </div>
+      </div>
 
       {isLoading && !content ? <p>Cargando material de estudio...</p> : null}
 
@@ -78,7 +84,7 @@ export function SummaryPreview({ content, isLoading }: SummaryPreviewProps) {
         <p>Cuando el job genere <code>full_study_notes_es.txt</code>, lo vas a ver estructurado acá.</p>
       ) : null}
 
-      {content ? <div className="summary-preview">{blocks}</div> : null}
+      {content ? <div className="summary-preview summary-reader">{blocks}</div> : null}
     </section>
   );
 }

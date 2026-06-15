@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import {
   getModelSelection,
   updateModelSelection,
@@ -100,15 +100,20 @@ export function AiRuntimeBanner({ health, error, onRefreshHealth }: AiRuntimeBan
     void refreshSelection();
   }, []);
 
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+
   useEffect(() => {
-    if (!health || !selection) {
+    if (!health) {
       return;
     }
 
-    if (selection.activeModel !== health.ollamaModel) {
+    const current = selectionRef.current;
+    if (!current || current.availableModels.length === 0 || current.activeModel !== health.ollamaModel) {
       void refreshSelection();
     }
-  }, [health, selection]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [health]);
 
   const handleModelChange = async (event: ChangeEvent<HTMLSelectElement>) => {
     const nextModel = event.target.value;
@@ -131,86 +136,79 @@ export function AiRuntimeBanner({ health, error, onRefreshHealth }: AiRuntimeBan
   };
 
   return (
-    <section className="panel ai-runtime-panel">
-      <div className="panel-header">
-        <h2>Runtime de IA</h2>
-        {health ? <span className={`status-pill status-${health.aiRuntime}`}>{health.aiRuntime}</span> : null}
-      </div>
-      <p className="panel-caption">{message}</p>
-      {health ? (
-        <div className="status-grid">
-          <div>
-            <strong>Modelo</strong>
-            <p>{health.ollamaModel}</p>
-          </div>
-          <div>
-            <strong>Jobs IA activos</strong>
-            <p>{health.activeJobsCount}</p>
-          </div>
-          <div>
-            <strong>Ownership</strong>
-            <p>{health.ownedByCurrentSession ? 'Esta sesión controla Ollama' : 'Runtime externo o apagado'}</p>
-          </div>
-          <div>
-            <strong>Idle shutdown</strong>
-            <p>{Math.round(health.idleShutdownMs / 60000)} min</p>
-          </div>
-          {health.lastActivityAt ? (
-            <div>
-              <strong>Última actividad</strong>
-              <p>{new Date(health.lastActivityAt).toLocaleString()}</p>
-            </div>
-          ) : null}
-          {health.nextShutdownAt ? (
-            <div>
-              <strong>Próximo apagado</strong>
-              <p>{new Date(health.nextShutdownAt).toLocaleString()}</p>
-            </div>
-          ) : null}
+    <section className="panel runtime-topbar">
+      <div className="runtime-topbar-main">
+        <div>
+          <p className="eyebrow">Top control bar</p>
+          <h2>Runtime de IA</h2>
+          <p className="panel-caption">{message}</p>
         </div>
-      ) : null}
+        <div className="status-badges">
+          {health ? <span className={`status-pill status-${health.aiRuntime}`}>{health.aiRuntime}</span> : null}
+          {selection ? <span className="status-pill subtle-pill">{selection.source === 'runtime_state' ? 'Selección persistida' : 'Default .env'}</span> : null}
+        </div>
+      </div>
 
-      <div className="model-selection-box">
-        <div className="model-selection-header">
-          <div>
-            <strong>Modelo LLM principal</strong>
-            <p className="panel-caption">
-              Cambia el modelo global para jobs futuros. No toca embeddings ni Whisper.
-            </p>
+      <div className="runtime-topbar-grid">
+        <div className="runtime-metrics-grid">
+          <div className="compact-metric">
+            <span>Modelo activo</span>
+            <strong>{health?.ollamaModel ?? '...'}</strong>
+          </div>
+          <div className="compact-metric">
+            <span>Jobs IA activos</span>
+            <strong>{health?.activeJobsCount ?? 0}</strong>
+          </div>
+          <div className="compact-metric">
+            <span>Ownership</span>
+            <strong>{health?.ownedByCurrentSession ? 'Sesión actual' : 'Externo / apagado'}</strong>
+          </div>
+          <div className="compact-metric">
+            <span>Idle shutdown</span>
+            <strong>{health ? `${Math.round(health.idleShutdownMs / 60000)} min` : '--'}</strong>
           </div>
         </div>
 
-        <label>
-          <span className="field-label">Seleccioná un modelo local de Ollama</span>
-          <select
-            value={selection?.activeModel ?? ''}
-            onChange={handleModelChange}
-            disabled={isSelectionLoading || isSavingSelection || !selection}
-          >
-            <option value="" disabled>
-              {isSelectionLoading ? 'Cargando modelos...' : 'Elegí un modelo'}
-            </option>
-            {(selection?.availableModels ?? [])
-              .filter((item) => item.selectable)
-              .map((item) => (
-                <option key={item.name} value={item.name}>
-                  {item.name}{item.size ? ` · ${formatBytes(item.size)}` : ''}
-                </option>
-              ))}
-          </select>
-        </label>
-
-        {selection ? (
-          <div className="model-selection-meta">
-            <span>Fuente: {selection.source === 'runtime_state' ? 'selección persistida' : 'default del .env'}</span>
-            {!selection.activeModelAvailable ? <span>Modelo activo no verificado ahora mismo.</span> : null}
+        <div className="runtime-model-card">
+          <div className="model-selection-header">
+            <div>
+              <strong>Modelo LLM principal</strong>
+              <p className="panel-caption">Cambia el modelo global para jobs futuros. No toca embeddings ni Whisper.</p>
+            </div>
           </div>
-        ) : null}
 
-        {selection?.warning ? <p className="runtime-warning">{selection.warning}</p> : null}
-        {selectionError ? <p className="runtime-warning runtime-warning-error">{selectionError}</p> : null}
-        {heavyModelWarning ? <p className="runtime-warning runtime-warning-caution">{heavyModelWarning}</p> : null}
+          <label className="field-block">
+            <span className="field-label">Seleccioná un modelo local de Ollama</span>
+            <select
+              value={selection?.activeModel ?? ''}
+              onChange={handleModelChange}
+              disabled={isSelectionLoading || isSavingSelection || !selection}
+            >
+              <option value="" disabled>
+                {isSelectionLoading ? 'Cargando modelos...' : 'Elegí un modelo'}
+              </option>
+              {(selection?.availableModels ?? [])
+                .filter((item) => item.selectable)
+                .map((item) => (
+                  <option key={item.name} value={item.name}>
+                    {item.name}{item.size ? ` · ${formatBytes(item.size)}` : ''}
+                  </option>
+                ))}
+            </select>
+          </label>
+
+          {selection ? (
+            <div className="model-selection-meta">
+              <span>Activo: {selection.activeModel}</span>
+              {!selection.activeModelAvailable ? <span>Modelo activo no verificado ahora mismo.</span> : null}
+            </div>
+          ) : null}
+        </div>
       </div>
+
+      {selection?.warning ? <p className="runtime-warning">{selection.warning}</p> : null}
+      {selectionError ? <p className="runtime-warning runtime-warning-error">{selectionError}</p> : null}
+      {heavyModelWarning ? <p className="runtime-warning runtime-warning-caution">{heavyModelWarning}</p> : null}
     </section>
   );
 }

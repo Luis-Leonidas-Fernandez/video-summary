@@ -1,7 +1,9 @@
-import type { JobResourceUsage } from '../api';
+import type { JobResourceUsage, ResourceUsageScope } from '../api';
 
 interface JobResourceUsagePanelProps {
   resourceUsage?: JobResourceUsage;
+  scope?: ResourceUsageScope;
+  batchWallClockMs?: number;
 }
 
 function formatDuration(durationMs: number): string {
@@ -16,16 +18,33 @@ function formatDuration(durationMs: number): string {
   return `${minutes}m ${seconds}s`;
 }
 
-export function JobResourceUsagePanel({ resourceUsage }: JobResourceUsagePanelProps) {
+function getScopeLabel(scope?: ResourceUsageScope): string {
+  switch (scope) {
+    case 'batch_aggregate':
+      return 'aggregate';
+    case 'last_item':
+      return 'last item';
+    case 'single_item':
+      return 'single item';
+    default:
+      return 'unknown';
+  }
+}
+
+export function JobResourceUsagePanel({ resourceUsage, scope, batchWallClockMs }: JobResourceUsagePanelProps) {
   if (!resourceUsage) {
     return null;
   }
 
   return (
-    <section className="panel resource-panel">
-      <div className="panel-header">
-        <h2>Uso de recursos del job</h2>
-        <span className="resource-badge">VISIBLE</span>
+    <section className="panel resource-panel resource-panel-muted">
+      <div className="panel-header panel-header-top">
+        <div>
+          <p className="eyebrow">Diagnóstico</p>
+          <h2>Uso de recursos del job</h2>
+          <p className="panel-caption">Panel técnico secundario para memoria, CPU y procesos del pipeline.</p>
+        </div>
+        <span className="resource-badge resource-badge-muted">{getScopeLabel(scope)}</span>
       </div>
 
       <div className="resource-grid">
@@ -57,6 +76,12 @@ export function JobResourceUsagePanel({ resourceUsage }: JobResourceUsagePanelPr
           <strong>Duración monitoreada</strong>
           <p>{formatDuration(resourceUsage.durationMs)}</p>
         </div>
+        {batchWallClockMs != null ? (
+          <div className="resource-card resource-duration">
+            <strong>Duración lote real</strong>
+            <p>{formatDuration(batchWallClockMs)}</p>
+          </div>
+        ) : null}
       </div>
 
       {resourceUsage.monitoringError ? (
