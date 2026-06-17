@@ -1,8 +1,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { appConfig } from '../config.js';
-import { checkCommandAvailable } from '../utils/shell.js';
 import type { AiRuntimeStatus } from '../types.js';
 import { updateRuntimeSessionState } from './runtimeSessionState.js';
+import { resolveOllamaExecutable } from './executableResolutionService.js';
 import { modelSelectionService } from './modelSelectionService.js';
 
 const OLLAMA_TAGS_URL = `${appConfig.ollamaBaseUrl}/api/tags`;
@@ -244,14 +244,16 @@ class AiRuntimeManager {
   }
 
   private async startRuntime(): Promise<void> {
-    const ollamaAvailable = await checkCommandAvailable('ollama');
-    if (!ollamaAvailable) {
+    const ollamaResolution = await resolveOllamaExecutable();
+    if (!ollamaResolution.exists || !ollamaResolution.resolvedPath) {
       this.status = 'error';
-      throw new Error('No se encontró el comando `ollama` para levantar el runtime on-demand.');
+      throw new Error(
+        `No se encontró el comando \`ollama\` para levantar el runtime on-demand. Configurado: ${ollamaResolution.configuredCommand}.`,
+      );
     }
 
     this.status = 'starting';
-    this.ollamaProcess = spawn('ollama', ['serve'], {
+    this.ollamaProcess = spawn(ollamaResolution.resolvedPath, ['serve'], {
       stdio: 'ignore',
       detached: false,
       env: {

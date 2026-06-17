@@ -13,9 +13,10 @@ import {
 import { withJobContext, jobLog } from '../utils/jobContext.js';
 import { jobRequiresAi, runWithAiRuntime } from './aiJobRuntime.js';
 import { aiRuntimeManager } from './aiRuntimeManager.js';
+import { formatSearchedPaths, resolveYtDlpExecutable } from './executableResolutionService.js';
 import { modelSelectionService } from './modelSelectionService.js';
 import { processVideoJob } from './videoProcessor.js';
-import { checkCommandAvailable, runCommand } from '../utils/shell.js';
+import { runCommand } from '../utils/shell.js';
 import type {
   BatchFailurePolicy,
   BatchJobItem,
@@ -562,8 +563,9 @@ class JobQueue {
     await this.persistJob(job);
     await this.appendParentLog(job, '[batch] resolving_sources:start');
 
-    if (!(await checkCommandAvailable('yt-dlp'))) {
-      const message = 'yt-dlp no está disponible para resolver playlists.';
+    const ytDlpResolution = await resolveYtDlpExecutable();
+    if (!ytDlpResolution.exists) {
+      const message = `La app desktop no encontró yt-dlp para resolver playlists. Comando configurado: ${ytDlpResolution.configuredCommand}. PATH efectivo: ${process.env.PATH ?? '(vacío)'}. Probado en: ${formatSearchedPaths(ytDlpResolution.searchedPaths)}. También podés fijar ${ytDlpResolution.overrideEnvVar}.`;
       job.status = 'failed';
       job.resolutionError = message;
       job.error = message;
@@ -576,7 +578,7 @@ class JobQueue {
 
     try {
       await runCommand({
-        command: 'yt-dlp',
+        command: ytDlpResolution.resolvedPath ?? ytDlpResolution.configuredCommand,
         args: ['--flat-playlist', '--dump-single-json', job.originalInput.playlistUrl],
         signal,
         onStdout: (chunk) => {

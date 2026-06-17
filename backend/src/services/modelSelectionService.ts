@@ -38,6 +38,25 @@ interface OllamaTagsResponse {
   models?: OllamaTagModel[];
 }
 
+export interface OllamaCatalogSnapshot {
+  reachable: boolean;
+  availableModels: LocalModelInfo[];
+  modelNames: string[];
+  warning?: string;
+}
+
+function summarizeCatalog(modelNames: string[]): string {
+  if (modelNames.length === 0) {
+    return 'sin modelos reportados';
+  }
+
+  if (modelNames.length <= 5) {
+    return modelNames.join(', ');
+  }
+
+  return `${modelNames.slice(0, 5).join(', ')} +${modelNames.length - 5} más`;
+}
+
 function normalize(text: string): string {
   return text
     .normalize('NFD')
@@ -110,12 +129,18 @@ function buildSelectionResponse({
   activeModel,
   source,
   availableModels,
+  ollamaBaseUrl,
+  catalogReachable,
+  catalogModelCount,
   warning,
   activeModelAvailableOverride,
 }: {
   activeModel: string;
   source: ModelSelectionSource;
   availableModels: LocalModelInfo[];
+  ollamaBaseUrl: string;
+  catalogReachable: boolean;
+  catalogModelCount: number;
   warning?: string;
   activeModelAvailableOverride?: boolean;
 }): ModelSelectionResponse {
@@ -125,6 +150,9 @@ function buildSelectionResponse({
     source,
     activeModelAvailable: activeModelAvailableOverride ?? availableModels.some((item) => item.name === activeModel),
     availableModels,
+    ollamaBaseUrl,
+    catalogReachable,
+    catalogModelCount,
     warning,
   };
 }
@@ -143,6 +171,15 @@ class ModelSelectionService {
   }
 
   async listLocalModels(): Promise<LocalModelInfo[]> {
+    const snapshot = await this.getCatalogSnapshot();
+    if (!snapshot.reachable && snapshot.warning) {
+      throw new Error(snapshot.warning);
+    }
+
+    return snapshot.availableModels;
+  }
+
+  async getCatalogSnapshot(): Promise<OllamaCatalogSnapshot> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), OLLAMA_TAGS_TIMEOUT_MS);
 
@@ -153,10 +190,24 @@ class ModelSelectionService {
       }
 
       const data = (await response.json()) as OllamaTagsResponse;
-      return (data.models ?? [])
+      const availableModels = (data.models ?? [])
         .map(toLocalModelInfo)
         .filter((item): item is LocalModelInfo => Boolean(item))
         .sort((left, right) => left.name.localeCompare(right.name));
+
+      return {
+        reachable: true,
+        availableModels,
+        modelNames: availableModels.map((item) => item.name),
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudieron consultar los modelos locales.';
+      return {
+        reachable: false,
+        availableModels: [],
+        modelNames: [],
+        warning: message,
+      };
     } finally {
       clearTimeout(timeout);
     }
@@ -216,6 +267,9 @@ class ModelSelectionService {
       activeModel: model,
       source: 'runtime_state',
       availableModels,
+      ollamaBaseUrl: appConfig.ollamaBaseUrl,
+      catalogReachable: true,
+      catalogModelCount: availableModels.length,
       activeModelAvailableOverride: true,
     });
     this.initialized = true;
@@ -227,14 +281,11 @@ class ModelSelectionService {
   }: {
     healPersistedState: boolean;
   }): Promise<ModelSelectionResponse> {
-    let availableModels: LocalModelInfo[] = [];
-    let tagsWarning: string | undefined;
-    try {
-      availableModels = await this.listLocalModels();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'No se pudieron consultar los modelos locales.';
-      tagsWarning = `No se pudo verificar el catálogo de modelos en Ollama: ${message}`;
-    }
+    const catalogSnapshot = await this.getCatalogSnapshot();
+    const availableModels = catalogSnapshot.availableModels;
+    const tagsWarning = catalogSnapshot.reachable
+      ? undefined
+      : `No se pudo verificar el catálogo de modelos en Ollama (${appConfig.ollamaBaseUrl}): ${catalogSnapshot.warning ?? 'error desconocido'}`;
     const persisted = await readPersistedSelection();
     const now = new Date().toISOString();
 
@@ -244,6 +295,9 @@ class ModelSelectionService {
           activeModel: persisted.activeOllamaModel,
           source: 'runtime_state',
           availableModels,
+          ollamaBaseUrl: appConfig.ollamaBaseUrl,
+          catalogReachable: false,
+          catalogModelCount: 0,
           warning: tagsWarning,
           activeModelAvailableOverride: false,
         });
@@ -263,6 +317,9 @@ class ModelSelectionService {
           activeModel: persisted.activeOllamaModel,
           source: 'runtime_state',
           availableModels,
+          ollamaBaseUrl: appConfig.ollamaBaseUrl,
+          catalogReachable: true,
+          catalogModelCount: availableModels.length,
           activeModelAvailableOverride: true,
         });
       }
@@ -285,7 +342,10 @@ class ModelSelectionService {
           activeModel: appConfig.defaultOllamaModel,
           source: 'env',
           availableModels,
-          warning: `${warning} Se volvió al modelo por default del .env.`,
+          ollamaBaseUrl: appConfig.ollamaBaseUrl,
+          catalogReachable: true,
+          catalogModelCount: availableModels.length,
+          warning: `${warning} Se volvió al modelo por default del .env. Catálogo actual: ${availableModels.length} modelo(s) en ${appConfig.ollamaBaseUrl} (${summarizeCatalog(catalogSnapshot.modelNames)}).`,
           activeModelAvailableOverride: true,
         });
       }
@@ -294,7 +354,10 @@ class ModelSelectionService {
         activeModel: appConfig.defaultOllamaModel,
         source: 'env',
         availableModels,
-        warning: `${warning} Además, el default ${appConfig.defaultOllamaModel} tampoco está disponible.`,
+        ollamaBaseUrl: appConfig.ollamaBaseUrl,
+        catalogReachable: true,
+        catalogModelCount: availableModels.length,
+        warning: `${warning} Además, el default ${appConfig.defaultOllamaModel} tampoco está disponible. Catálogo actual: ${availableModels.length} modelo(s) en ${appConfig.ollamaBaseUrl} (${summarizeCatalog(catalogSnapshot.modelNames)}).`,
       });
     }
 
@@ -303,6 +366,9 @@ class ModelSelectionService {
         activeModel: appConfig.defaultOllamaModel,
         source: 'env',
         availableModels,
+        ollamaBaseUrl: appConfig.ollamaBaseUrl,
+        catalogReachable: false,
+        catalogModelCount: 0,
         warning: tagsWarning,
         activeModelAvailableOverride: false,
       });
@@ -313,7 +379,10 @@ class ModelSelectionService {
       activeModel: appConfig.defaultOllamaModel,
       source: 'env',
       availableModels,
-      warning: defaultExists ? undefined : `El modelo por default ${appConfig.defaultOllamaModel} no está disponible en Ollama local.`,
+      ollamaBaseUrl: appConfig.ollamaBaseUrl,
+      catalogReachable: true,
+      catalogModelCount: availableModels.length,
+      warning: defaultExists ? undefined : `El modelo por default ${appConfig.defaultOllamaModel} no está disponible en Ollama local (${appConfig.ollamaBaseUrl}). Catálogo actual: ${availableModels.length} modelo(s): ${summarizeCatalog(catalogSnapshot.modelNames)}.`,
       activeModelAvailableOverride: defaultExists,
     });
   }

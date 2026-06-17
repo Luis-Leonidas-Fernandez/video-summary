@@ -22,11 +22,13 @@ async function listPartFiles(partsDir: string): Promise<string[]> {
 export async function partitionVideoAudio({
   outputDir,
   inputAudioPath,
+  ffmpegCommand,
   log,
   signal,
 }: {
   outputDir: string;
   inputAudioPath: string;
+  ffmpegCommand: string;
   log: Logger;
   signal?: AbortSignal;
 }): Promise<string[]> {
@@ -46,7 +48,7 @@ export async function partitionVideoAudio({
   );
 
   await runCommand({
-    command: 'ffmpeg',
+    command: ffmpegCommand,
     args: [
       '-y',
       '-i',
@@ -76,7 +78,7 @@ export async function partitionVideoAudio({
 
   const parts = await listPartFiles(partsDir);
   if (parts.length === 0) {
-    throw new Error('ffmpeg terminó, pero no generó partes de video de 30 minutos.');
+    throw new Error('ffmpeg terminó, pero no generó partes de video en el output esperado.');
   }
 
   await log(`Video segmentado en ${parts.length} partes de trabajo.`);

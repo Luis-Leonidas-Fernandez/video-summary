@@ -79,6 +79,9 @@ function resolveStageScopedNumber({
 
 export const appConfig = {
   port: Number(process.env.PORT ?? 3001),
+  ollamaBinary: process.env.OLLAMA_BINARY ?? 'ollama',
+  ffmpegBinary: process.env.FFMPEG_BINARY ?? 'ffmpeg',
+  ytDlpBinary: process.env.YT_DLP_BINARY ?? 'yt-dlp',
   whisperCppBinary: process.env.WHISPER_CPP_BINARY ?? 'whisper-cli',
   whisperCppModelPath: process.env.WHISPER_CPP_MODEL_PATH ?? '',
   whisperCppThreads: Number(process.env.WHISPER_CPP_THREADS ?? 10),

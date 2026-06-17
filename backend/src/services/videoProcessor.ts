@@ -20,13 +20,19 @@ import {
 } from './studyArtifacts.js';
 import { aiRuntimeManager } from './aiRuntimeManager.js';
 import { createJobResourceMonitor } from './jobResourceMonitor.js';
+import {
+  formatSearchedPaths,
+  resolveFfmpegExecutable,
+  resolveYtDlpExecutable,
+  type ExecutableResolution,
+} from './executableResolutionService.js';
 import { annotateChunkSpeakerAwareness, buildSpeakerAwarenessLogLine } from './speakerAwarenessService.js';
 import { postprocessTranscription } from './transcriptionPostprocessor.js';
 import { partitionVideoAudio } from './videoPartitioner.js';
 import { transcribeAudio, validateWhisperCpp } from './whisperCpp.js';
 import { exportStudyNotesDocx } from './wordExportService.js';
 import { appendLine, ensureDir, listJobFiles, pathExists, readText, writeJson, writeText, writeTextAtomic } from '../utils/files.js';
-import { checkCommandAvailable, runCommand } from '../utils/shell.js';
+import { runCommand } from '../utils/shell.js';
 import type { JobRecord } from '../types.js';
 
 interface ProcessJobHooks {
@@ -38,7 +44,6 @@ interface ProcessJobHooks {
   cancelJob: (message: string) => Promise<void>;
 }
 
-const REQUIRED_COMMANDS = ['yt-dlp', 'ffmpeg'] as const;
 const MIN_VALID_ARTIFACT_LENGTH = 40;
 const SPANISH_STOPWORDS = new Set([
   'el', 'la', 'los', 'las', 'de', 'del', 'que', 'y', 'en', 'por', 'para', 'con', 'una', 'un', 'como', 'se', 'al',
@@ -71,6 +76,11 @@ interface StudyPart {
   chunks: ChunkManifestChunk[];
 }
 
+interface ProcessingDependencies {
+  ytDlpCommand: string;
+  ffmpegCommand: string;
+}
+
 function isCancellationError(error: unknown): boolean {
   return error instanceof Error && (
     error.name === 'AbortError'
@@ -88,22 +98,32 @@ function throwIfCancelled(signal?: AbortSignal): void {
   }
 }
 
-export async function validateDependencies(): Promise<void> {
-  const results = await Promise.all(
-    REQUIRED_COMMANDS.map(async (command) => ({
-      command,
-      exists: await checkCommandAvailable(command),
-    })),
-  );
+function formatResolutionFailure(
+  label: string,
+  resolution: ExecutableResolution,
+): string {
+  return `${label} no está disponible para el pipeline. Comando configurado: ${resolution.configuredCommand}. PATH efectivo: ${process.env.PATH ?? '(vacío)'}. Probado en: ${formatSearchedPaths(resolution.searchedPaths)}. También podés fijar ${resolution.overrideEnvVar} manualmente.`;
+}
 
-  const missing = results.filter((item) => !item.exists).map((item) => item.command);
-  if (missing.length > 0) {
-    throw new Error(
-      `Faltan herramientas del sistema: ${missing.join(', ')}. Instalá yt-dlp y ffmpeg con Homebrew antes de procesar videos.`,
-    );
+export async function validateDependencies(): Promise<ProcessingDependencies> {
+  const [ytDlpResolution, ffmpegResolution] = await Promise.all([
+    resolveYtDlpExecutable(),
+    resolveFfmpegExecutable(),
+  ]);
+
+  if (!ytDlpResolution.exists) {
+    throw new Error(formatResolutionFailure('yt-dlp', ytDlpResolution));
+  }
+
+  if (!ffmpegResolution.exists) {
+    throw new Error(formatResolutionFailure('ffmpeg', ffmpegResolution));
   }
 
   await validateWhisperCpp();
+  return {
+    ytDlpCommand: ytDlpResolution.resolvedPath ?? ytDlpResolution.configuredCommand,
+    ffmpegCommand: ffmpegResolution.resolvedPath ?? ffmpegResolution.configuredCommand,
+  };
 }
 
 export async function processVideoJob(job: JobRecord, hooks: ProcessJobHooks, signal?: AbortSignal): Promise<void> {
@@ -163,14 +183,14 @@ export async function processVideoJob(job: JobRecord, hooks: ProcessJobHooks, si
   try {
     throwIfCancelled(signal)
     await log('Iniciando validación de dependencias del sistema.');
-    await validateDependencies();
+    const processingDependencies = await validateDependencies();
     await persistJobFile();
 
     let audioPath: string;
     const downloadSpan = opikTrace.span({ name: 'pipeline.download', type: 'general' });
     setActiveParentSpan(downloadSpan);
     try {
-      audioPath = await downloadAudio(job, log, hooks, signal);
+      audioPath = await downloadAudio(job, processingDependencies, log, hooks, signal);
       downloadSpan.update({ output: { audioPath } });
     } finally {
       downloadSpan.end();
@@ -183,7 +203,7 @@ export async function processVideoJob(job: JobRecord, hooks: ProcessJobHooks, si
     const transcribeSpan = opikTrace.span({ name: 'pipeline.transcribe', type: 'general' });
     setActiveParentSpan(transcribeSpan);
     try {
-      transcriptionPath = await runTranscription(job, audioPath!, log, hooks, signal);
+      transcriptionPath = await runTranscription(job, processingDependencies, audioPath!, log, hooks, signal);
       traceTranscription = await readText(transcriptionPath).catch(() => '');
       transcribeSpan.update({ output: { transcriptionPath, transcription: traceTranscription } });
     } finally {
@@ -300,6 +320,7 @@ export async function processVideoJob(job: JobRecord, hooks: ProcessJobHooks, si
 
 async function downloadAudio(
   job: JobRecord,
+  dependencies: ProcessingDependencies,
   log: (message: string) => Promise<void>,
   hooks: Pick<ProcessJobHooks, 'updateStatus' | 'refreshFiles'>,
   signal?: AbortSignal,
@@ -318,7 +339,7 @@ async function downloadAudio(
   await log(`Descargando audio desde: ${job.url}`);
 
   await runCommand({
-    command: 'yt-dlp',
+    command: dependencies.ytDlpCommand,
     args: ['-x', '--audio-format', 'mp3', '--no-playlist', '-o', outputTemplate, job.url],
     signal,
     onStdout: async (chunk) => {
@@ -356,6 +377,7 @@ async function downloadAudio(
 
 async function denoiseAudio(
   job: JobRecord,
+  dependencies: ProcessingDependencies,
   audioPath: string,
   log: (message: string) => Promise<void>,
   signal?: AbortSignal,
@@ -370,7 +392,7 @@ async function denoiseAudio(
   await log(`Aplicando denoise previo con ffmpeg usando filtro: ${appConfig.whisperDenoiseFilter}`);
 
   await runCommand({
-    command: 'ffmpeg',
+    command: dependencies.ffmpegCommand,
     args: [
       '-y',
       '-i',
@@ -408,6 +430,7 @@ async function denoiseAudio(
 }
 
 async function segmentPartForTranscription(
+  dependencies: ProcessingDependencies,
   segmentDir: string,
   partAudioPath: string,
   partLabel: string,
@@ -432,7 +455,7 @@ async function segmentPartForTranscription(
   );
 
   await runCommand({
-    command: 'ffmpeg',
+    command: dependencies.ffmpegCommand,
     args: [
       '-y',
       '-i',
@@ -477,16 +500,18 @@ async function segmentPartForTranscription(
 
 async function runTranscription(
   job: JobRecord,
+  dependencies: ProcessingDependencies,
   audioPath: string,
   log: (message: string) => Promise<void>,
   hooks: Pick<ProcessJobHooks, 'updateStatus' | 'refreshFiles'>,
   signal?: AbortSignal,
 ): Promise<string> {
   await hooks.updateStatus('transcribing');
-  const denoisedAudioPath = await denoiseAudio(job, audioPath, log, signal);
+  const denoisedAudioPath = await denoiseAudio(job, dependencies, audioPath, log, signal);
   const videoParts = await partitionVideoAudio({
     outputDir: job.outputDir,
     inputAudioPath: denoisedAudioPath,
+    ffmpegCommand: dependencies.ffmpegCommand,
     log,
     signal,
   });
@@ -498,6 +523,7 @@ async function runTranscription(
 
   const transcriptionPath = path.join(job.outputDir, 'transcription.txt');
   const studyParts = await transcribeVideoParts({
+    dependencies,
     job,
     videoParts,
     log,
@@ -864,11 +890,13 @@ async function ensureSpanishReadableText(
 }
 
 async function transcribeVideoParts({
+  dependencies,
   job,
   videoParts,
   log,
   signal,
 }: {
+  dependencies: ProcessingDependencies;
   job: JobRecord;
   videoParts: string[];
   log: (message: string) => Promise<void>;
@@ -883,7 +911,7 @@ async function transcribeVideoParts({
     const transcriptionPath = path.join(job.outputDir, `transcription_part_${partId}.txt`);
     const extractionPath = path.join(job.outputDir, `extraction_part_${partId}.txt`);
     const segmentDir = path.join(job.outputDir, 'transcription_chunks', `part_${partId}`);
-    const audioSegments = await segmentPartForTranscription(segmentDir, audioPath, `la parte ${partId}`, log, signal);
+    const audioSegments = await segmentPartForTranscription(dependencies, segmentDir, audioPath, `la parte ${partId}`, log, signal);
     const chunkMetadata: ChunkManifestChunk[] = [];
 
     if (await isValidArtifact(transcriptionPath)) {

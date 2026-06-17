@@ -19,6 +19,13 @@ let shuttingDown = false;
 const userDataRoot = app.getPath('userData');
 const logsDir = path.join(userDataRoot, 'logs');
 const desktopLogPath = path.join(logsDir, 'desktop-main.log');
+const knownDesktopPathEntries = [
+  '/opt/homebrew/bin',
+  '/opt/homebrew/sbin',
+  '/usr/local/bin',
+  '/usr/bin',
+  '/bin',
+];
 
 function ensureDir(dirPath) {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -52,8 +59,16 @@ function splashPath() {
 }
 
 function backendEnv() {
+  const currentPathEntries = String(process.env.PATH || '')
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const mergedPathEntries = [...knownDesktopPathEntries, ...currentPathEntries]
+    .filter((entry, index, all) => all.indexOf(entry) === index);
+
   return {
     ...process.env,
+    PATH: mergedPathEntries.join(path.delimiter),
     VIDEO_STUDY_DESKTOP: 'true',
     PORT: String(backendPort),
     VIDEO_STUDY_OUTPUT_ROOT: path.join(userDataRoot, 'output'),
@@ -140,6 +155,7 @@ async function waitForBackend() {
 function startBackendProcess() {
   const cwd = backendCwd();
   const env = backendEnv();
+  appendDesktopLog(`Backend PATH efectivo: ${env.PATH || '(vacío)'}`);
 
   if (isDev) {
     const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';

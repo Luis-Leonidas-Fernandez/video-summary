@@ -205,6 +205,8 @@ export function AiRuntimeBanner({ health, error, onRefreshHealth }: AiRuntimeBan
             <div className="model-selection-meta">
               <span>Activo: {selection.activeModel}</span>
               <span>Default: {selection.defaultModel}</span>
+              <span>Base URL: {selection.ollamaBaseUrl}</span>
+              <span>Catálogo: {selection.catalogReachable ? `${selection.catalogModelCount} modelo(s)` : 'sin respuesta'}</span>
               {!selection.activeModelAvailable ? <span>Modelo activo no verificado ahora mismo.</span> : null}
             </div>
           ) : null}
@@ -212,6 +214,11 @@ export function AiRuntimeBanner({ health, error, onRefreshHealth }: AiRuntimeBan
       </div>
 
       {selection?.warning ? <p className="runtime-warning">{selection.warning}</p> : null}
+      {selection && !selection.catalogReachable ? (
+        <p className="runtime-warning runtime-warning-error">
+          No se pudo consultar el catálogo real en {selection.ollamaBaseUrl}. Si te falta un modelo esperado, primero resolvé la conectividad de ese servidor Ollama.
+        </p>
+      ) : null}
       {selectionError ? <p className="runtime-warning runtime-warning-error">{selectionError}</p> : null}
       {heavyModelWarning ? <p className="runtime-warning runtime-warning-caution">{heavyModelWarning}</p> : null}
     </section>

@@ -5,6 +5,18 @@ function getDependencyTone(ok: boolean): 'healthy' | 'failed' {
   return ok ? 'healthy' : 'failed';
 }
 
+function summarizeCatalogModels(modelNames: string[] | undefined): string {
+  if (!modelNames || modelNames.length === 0) {
+    return 'Sin modelos reportados';
+  }
+
+  if (modelNames.length <= 4) {
+    return modelNames.join(', ');
+  }
+
+  return `${modelNames.slice(0, 4).join(', ')} +${modelNames.length - 4} más`;
+}
+
 export function DesktopEnvironmentPanel() {
   const [diagnostics, setDiagnostics] = useState<SystemDiagnosticsResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -51,6 +63,46 @@ export function DesktopEnvironmentPanel() {
               {diagnostics.allRequiredAvailable ? 'Entorno listo' : 'Faltan dependencias'}
             </span>
             <span className="status-pill subtle-pill">Modo: {diagnostics.appMode}</span>
+            <span className={`status-pill ${diagnostics.catalogReachable ? 'health-healthy' : 'health-warning'}`}>
+              Ollama catálogo: {diagnostics.catalogReachable ? 'reachable' : 'sin respuesta'}
+            </span>
+          </div>
+
+          <div className="desktop-dependency-list">
+            <article className="desktop-dependency-card">
+              <div className="desktop-dependency-topline">
+                <strong>Backend PATH efectivo</strong>
+                <span className="status-pill subtle-pill">Desktop env</span>
+              </div>
+              <p className="panel-caption">
+                Este es el PATH que ve el backend embebido dentro de la app desktop. Si Finder no hereda Homebrew, el problema aparece acá.
+              </p>
+              <details className="details-panel">
+                <summary>Ver PATH completo</summary>
+                <p className="desktop-dependency-meta">{diagnostics.backendPath || '(vacío)'}</p>
+              </details>
+            </article>
+
+            <article className="desktop-dependency-card">
+              <div className="desktop-dependency-topline">
+                <strong>Catálogo Ollama consultado</strong>
+                <span className={`status-pill ${diagnostics.catalogReachable ? 'health-healthy' : 'health-warning'}`}>
+                  {diagnostics.catalogModelCount ?? 0} modelo(s)
+                </span>
+              </div>
+              <p className="desktop-dependency-meta">Base URL: {diagnostics.ollamaBaseUrl}</p>
+              <p className="panel-caption">{summarizeCatalogModels(diagnostics.catalogModelNames)}</p>
+              {diagnostics.catalogModelNames && diagnostics.catalogModelNames.length > 0 ? (
+                <details className="details-panel">
+                  <summary>Ver nombres detectados</summary>
+                  <ul className="forensic-list">
+                    {diagnostics.catalogModelNames.map((modelName) => (
+                      <li key={modelName}>{modelName}</li>
+                    ))}
+                  </ul>
+                </details>
+              ) : null}
+            </article>
           </div>
 
           <div className="desktop-dependency-list">
@@ -62,8 +114,14 @@ export function DesktopEnvironmentPanel() {
                 </div>
                 <p className="panel-caption">{dependency.detail}</p>
                 <p className="desktop-dependency-meta">Esperado: {dependency.expected}</p>
+                {dependency.configuredCommand ? (
+                  <p className="desktop-dependency-meta">Comando configurado: {dependency.configuredCommand}</p>
+                ) : null}
                 {dependency.resolvedValue ? (
-                  <p className="desktop-dependency-meta">Configurado: {dependency.resolvedValue}</p>
+                  <p className="desktop-dependency-meta">Resuelto: {dependency.resolvedValue}</p>
+                ) : null}
+                {dependency.source ? (
+                  <p className="desktop-dependency-meta">Fuente: {dependency.source}</p>
                 ) : null}
                 {dependency.resolutionHint ? (
                   <p className="desktop-dependency-hint">{dependency.resolutionHint}</p>

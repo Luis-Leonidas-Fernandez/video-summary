@@ -222,6 +222,9 @@ export interface ModelSelectionResponse {
   source: ModelSelectionSource;
   activeModelAvailable: boolean;
   availableModels: LocalModelInfo[];
+  ollamaBaseUrl: string;
+  catalogReachable: boolean;
+  catalogModelCount: number;
   warning?: string;
 }
 
@@ -245,7 +248,9 @@ export interface SystemDependencyStatus {
   kind: SystemDependencyKind;
   ok: boolean;
   expected: string;
+  configuredCommand?: string;
   resolvedValue?: string;
+  source?: 'env' | 'path' | 'known_path' | 'missing' | 'config';
   detail: string;
   resolutionHint?: string;
 }
@@ -254,5 +259,10 @@ export interface SystemDiagnosticsResponse {
   appMode: 'web' | 'desktop';
   allRequiredAvailable: boolean;
   generatedAt: string;
+  backendPath: string;
+  ollamaBaseUrl: string;
+  catalogReachable?: boolean;
+  catalogModelCount?: number;
+  catalogModelNames?: string[];
   dependencies: SystemDependencyStatus[];
 }

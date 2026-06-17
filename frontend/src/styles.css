@@ -1440,3 +1440,22 @@ h3 {
   font-size: 0.85rem;
   line-height: 1.55;
 }
+
+.details-panel {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.details-panel summary {
+  cursor: pointer;
+  color: var(--text-bright);
+  font-size: 0.85rem;
+}
+
+.forensic-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  color: var(--text-soft);
+  display: grid;
+  gap: 0.25rem;
+}
