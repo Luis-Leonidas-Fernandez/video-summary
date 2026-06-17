@@ -7,13 +7,18 @@ const isDev = !app.isPackaged;
 const rendererUrl = process.env.ELECTRON_RENDERER_URL || 'http://127.0.0.1:3000';
 const backendPort = Number(process.env.VST_BACKEND_PORT || (isDev ? 3001 : 39091));
 const backendOrigin = `http://127.0.0.1:${backendPort}`;
+const ollamaOrigin = process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434';
+const ollamaTagsUrl = `${ollamaOrigin.replace(/\/$/, '')}/api/tags`;
 const startupTimeoutMs = 20_000;
+const ollamaStartupTimeoutMs = 15_000;
 const pollIntervalMs = 400;
 
 let mainWindow = null;
 let splashWindow = null;
 let backendProcess = null;
 let backendOwnedByDesktop = false;
+let ollamaProcess = null;
+let ollamaOwnedByDesktop = false;
 let shuttingDown = false;
 
 const userDataRoot = app.getPath('userData');
@@ -75,6 +80,38 @@ function backendEnv() {
     VIDEO_STUDY_RUNTIME_DIR: path.join(userDataRoot, '.runtime'),
     VIDEO_STUDY_PROJECT_ROOT: userDataRoot,
   };
+}
+
+function resolvedDesktopPath() {
+  return backendEnv().PATH || '';
+}
+
+function splitPathEntries(value) {
+  return String(value || '')
+    .split(path.delimiter)
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+}
+
+function resolveExecutablePath(configuredCommand, fallbackBinaryName) {
+  const command = configuredCommand || fallbackBinaryName;
+
+  if (command.includes('/')) {
+    return fs.existsSync(command) ? command : null;
+  }
+
+  const pathEntries = splitPathEntries(resolvedDesktopPath());
+  for (const directory of pathEntries) {
+    const candidate = path.join(directory, command);
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {
+      // keep looking
+    }
+  }
+
+  return null;
 }
 
 function createSplashWindow() {
@@ -139,17 +176,83 @@ async function isBackendHealthy() {
   }
 }
 
-async function waitForBackend() {
-  const deadline = Date.now() + startupTimeoutMs;
+async function isOllamaReachable() {
+  try {
+    const response = await fetch(ollamaTagsUrl);
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function waitFor(url, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (await isBackendHealthy()) {
-      return true;
+    try {
+      const response = await fetch(url);
+      if (response.ok) {
+        return true;
+      }
+    } catch {
+      // not ready yet
     }
 
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
 
   return false;
+}
+
+async function waitForBackend() {
+  return waitFor(`${backendOrigin}/api/health`, startupTimeoutMs);
+}
+
+async function waitForOllama() {
+  return waitFor(ollamaTagsUrl, ollamaStartupTimeoutMs);
+}
+
+function startOllamaProcess() {
+  const ollamaBinary = resolveExecutablePath(process.env.OLLAMA_BINARY || 'ollama', 'ollama');
+  if (!ollamaBinary) {
+    throw new Error(
+      `No se encontró el ejecutable de Ollama para la app desktop. PATH efectivo: ${resolvedDesktopPath() || '(vacío)'}. También podés definir OLLAMA_BINARY.`,
+    );
+  }
+
+  const env = {
+    ...process.env,
+    PATH: resolvedDesktopPath(),
+  };
+
+  appendDesktopLog(`Levantando Ollama desktop con ${ollamaBinary}.`);
+  ollamaProcess = spawn(ollamaBinary, ['serve'], {
+    stdio: 'ignore',
+    shell: false,
+    env,
+  });
+  ollamaOwnedByDesktop = true;
+
+  ollamaProcess.on('exit', (code, signal) => {
+    appendDesktopLog(`ollama terminó (${signal ? `signal ${signal}` : `code ${code ?? 'unknown'}`})`);
+    ollamaProcess = null;
+    ollamaOwnedByDesktop = false;
+  });
+}
+
+async function ensureOllamaReady() {
+  if (await isOllamaReachable()) {
+    appendDesktopLog(`Reutilizando Ollama ya disponible en ${ollamaOrigin}.`);
+    ollamaOwnedByDesktop = false;
+    return;
+  }
+
+  startOllamaProcess();
+  const ready = await waitForOllama();
+  if (!ready) {
+    throw new Error(`Ollama no respondió en ${ollamaOrigin} dentro del tiempo esperado.`);
+  }
+
+  appendDesktopLog(`Ollama listo en ${ollamaOrigin}.`);
 }
 
 function startBackendProcess() {
@@ -210,6 +313,35 @@ async function ensureBackendReady() {
   }
 }
 
+async function shutdownOllama() {
+  if (!ollamaOwnedByDesktop || !ollamaProcess || ollamaProcess.killed) {
+    return;
+  }
+
+  await new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      try {
+        ollamaProcess.kill('SIGKILL');
+      } catch {
+        // ignore
+      }
+      resolve();
+    }, 5_000);
+
+    ollamaProcess.once('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+
+    try {
+      ollamaProcess.kill('SIGTERM');
+    } catch {
+      clearTimeout(timer);
+      resolve();
+    }
+  });
+}
+
 async function shutdownBackend() {
   if (!backendOwnedByDesktop || !backendProcess || backendProcess.killed) {
     return;
@@ -241,6 +373,7 @@ async function shutdownBackend() {
 
 async function bootDesktopShell() {
   createSplashWindow();
+  await ensureOllamaReady();
   await ensureBackendReady();
   createMainWindow();
 }
@@ -259,6 +392,7 @@ app.on('before-quit', async (event) => {
   shuttingDown = true;
   event.preventDefault();
   await shutdownBackend();
+  await shutdownOllama();
   app.exit(0);
 });
 
