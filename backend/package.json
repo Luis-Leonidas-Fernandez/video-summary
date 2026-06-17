@@ -9,7 +9,9 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "archiver": "^8.0.0",
     "cors": "^2.8.5",
+    "docx": "^9.7.1",
     "express": "^4.21.2",
     "jsonrepair": "^3.14.0",
     "opik": "^2.0.29",

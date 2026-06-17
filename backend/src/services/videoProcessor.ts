@@ -24,6 +24,7 @@ import { annotateChunkSpeakerAwareness, buildSpeakerAwarenessLogLine } from './s
 import { postprocessTranscription } from './transcriptionPostprocessor.js';
 import { partitionVideoAudio } from './videoPartitioner.js';
 import { transcribeAudio, validateWhisperCpp } from './whisperCpp.js';
+import { exportStudyNotesDocx } from './wordExportService.js';
 import { appendLine, ensureDir, listJobFiles, pathExists, readText, writeJson, writeText, writeTextAtomic } from '../utils/files.js';
 import { checkCommandAvailable, runCommand } from '../utils/shell.js';
 import type { JobRecord } from '../types.js';
@@ -989,6 +990,7 @@ async function generateStudyOutputs(
   const validationReportPath = path.join(outputDir, 'validation_report.json');
   const groundingReportPath = path.join(outputDir, 'grounding_report.json');
   const chunkManifestPath = path.join(outputDir, 'chunk_manifest.json');
+  const studyNotesDocxPath = path.join(outputDir, 'study_notes_es.docx');
 
   const allGlobalArtifactsExist = await Promise.all([
     isValidArtifact(fullStudyNotesPath),
@@ -1001,6 +1003,7 @@ async function generateStudyOutputs(
     isValidArtifact(validationReportPath),
     isValidArtifact(groundingReportPath),
     isValidArtifact(chunkManifestPath),
+    isValidArtifact(studyNotesDocxPath),
   ]);
 
   if (allGlobalArtifactsExist.every(Boolean)) {
@@ -1136,13 +1139,31 @@ async function generateStudyOutputs(
   await writeText(glossaryPath, generateGlossary(partsWithContent));
   await recordStageSnapshot('full_notes:artifacts:end');
 
+  let docxExportWarning = false;
+  try {
+    const docxExport = await exportStudyNotesDocx(outputDir);
+    if (docxExport.generated && docxExport.outputPath && docxExport.sourceType) {
+      await refreshFiles();
+      await log(
+        `Exportación Word generada en ${docxExport.outputPath} usando ${docxExport.sourceType === 'full_study_notes' ? 'full_study_notes_es.txt' : 'summary_es.txt'}.`,
+      );
+    } else {
+      docxExportWarning = true;
+      await log('Advertencia de exportación Word: no se encontró material español exportable para generar study_notes_es.docx.');
+    }
+  } catch (error) {
+    docxExportWarning = true;
+    const message = error instanceof Error ? error.message : 'Error desconocido al exportar Word.';
+    await log(`Advertencia de exportación Word: ${message}`);
+  }
+
   if (!(await isValidArtifact(transcriptionPath))) {
     throw new Error(`La transcripción consolidada esperada no es válida: ${transcriptionPath}`);
   }
 
   const completedWithWarnings = groundingInputs.some((part) =>
     part.windowReports.some((window) => window.finalStatus === 'needs_review'),
-  ) || validationParts.some((part) => part.status !== 'accepted')
+  ) || validationParts.some((part) => part.status !== 'accepted') || docxExportWarning
 
   return { completedWithWarnings }
 }

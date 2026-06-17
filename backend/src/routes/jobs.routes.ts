@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { promises as fs } from 'node:fs';
+import { collectBatchStudyNotesDocx, streamBatchStudyNotesZip } from '../services/batchWordZipService.js';
 import { jobQueue, isValidLanguage, isValidUrl, serializeJob } from '../services/jobQueue.js';
 import { safeResolveFile } from '../utils/files.js';
 import type { CreateJobInput, JobLogsResponse } from '../types.js';
@@ -194,6 +195,34 @@ jobsRouter.get('/:id/files', async (req, res) => {
   res.json(job.files);
 });
 
+jobsRouter.get('/:id/download/study-notes.zip', async (req, res) => {
+  const job = await jobQueue.resolveJob(req.params.id);
+  if (!job) {
+    res.status(404).json({ error: 'Job no encontrado.' });
+    return;
+  }
+
+  if (!job.items?.length || job.inputMode === 'single_url') {
+    res.status(400).json({ error: 'La descarga masiva de Word en ZIP solo aplica a jobs batch.' });
+    return;
+  }
+
+  const collection = await collectBatchStudyNotesDocx(job);
+  if (collection.entries.length === 0) {
+    res.status(404).json({ error: 'Este lote todavía no tiene archivos Word exportables para descargar.' });
+    return;
+  }
+
+  try {
+    await streamBatchStudyNotesZip(job, res);
+  } catch (error) {
+    if (!res.headersSent) {
+      const message = error instanceof Error ? error.message : 'No se pudo generar el ZIP de estudio.';
+      res.status(500).json({ error: message });
+    }
+  }
+});
+
 jobsRouter.get('/:id/files/:filename', async (req, res) => {
   const job = await jobQueue.resolveJob(req.params.id);
   if (!job) {
@@ -205,6 +234,10 @@ jobsRouter.get('/:id/files/:filename', async (req, res) => {
     const relativePath = decodeURIComponent(req.params.filename);
     const filePath = safeResolveFile(job.outputDir, relativePath);
     await fs.access(filePath);
+    if (filePath.toLowerCase().endsWith('.docx')) {
+      res.download(filePath);
+      return;
+    }
     res.sendFile(filePath);
   } catch {
     res.status(404).json({ error: 'Archivo no encontrado.' });
@@ -244,6 +277,10 @@ jobsRouter.get('/:id/items/:itemId/files/:filename', async (req, res) => {
     const relativePath = decodeURIComponent(req.params.filename);
     const filePath = safeResolveFile(item.outputDir, relativePath);
     await fs.access(filePath);
+    if (filePath.toLowerCase().endsWith('.docx')) {
+      res.download(filePath);
+      return;
+    }
     res.sendFile(filePath);
   } catch {
     res.status(404).json({ error: 'Archivo no encontrado.' });
