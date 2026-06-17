@@ -13,6 +13,7 @@
 - [Estructura del repo](#estructura-del-repo)
 - [Instalación](#instalación)
 - [Cómo correrlo](#cómo-correrlo)
+- [Modo desktop (Electron)](#modo-desktop-electron)
 - [API](#api)
 - [Outputs y artifacts](#outputs-y-artifacts)
 - [Decisiones técnicas](#decisiones-técnicas)
@@ -184,6 +185,11 @@ video-summary/
         SummaryPreview.tsx
       main.tsx
       styles.css
+  desktop/
+    main.cjs
+    preload.cjs
+    splash.html
+    dev.mjs
   output/
   scripts/
     dev.mjs
@@ -363,7 +369,7 @@ Ese comando:
 - al hacer `Ctrl + C`, ejecuta la misma limpieza que `npm run cleanup`
 
 - Backend: [http://localhost:3001](http://localhost:3001)
-- Frontend: [http://localhost:5173](http://localhost:5173)
+- Frontend: [http://localhost:3000](http://localhost:3000)
 
 El frontend también renderiza `full_study_notes_es.txt` con una presentación legible además de permitir abrir o descargar el archivo.
 
@@ -410,6 +416,45 @@ cd /ruta/a/video-summary
 npm run dev:backend
 npm run dev:frontend
 ```
+
+---
+
+## Modo desktop (Electron)
+
+La shell desktop existe para abstraer la terminal en el uso diario. En este primer corte:
+
+- arranca **Electron + backend local** automáticamente
+- espera `GET /api/health` antes de abrir la UI
+- reutiliza la misma app React adentro de la ventana desktop
+- muestra un panel de diagnóstico si falta `ollama`, `ffmpeg`, `yt-dlp`, `whisper.cpp` o Python
+
+### Desarrollo desktop
+
+```bash
+cd /ruta/a/video-summary
+npm run desktop:dev
+```
+
+Eso levanta:
+
+- renderer Vite
+- backend local embebido
+- shell Electron
+
+### Empaquetado desktop (Mac-first)
+
+```bash
+cd /ruta/a/video-summary
+npm run desktop:package
+```
+
+Los artifacts salen en `desktop-dist/`.
+
+### Importante
+
+- la app desktop **no empaqueta** todavía `ollama`, `ffmpeg`, `yt-dlp`, `whisper.cpp` ni Python
+- esas dependencias siguen siendo prerequisitos externos en v1
+- la shell desktop sí valida su estado y lo muestra dentro de la UI, sin obligarte a abrir una terminal
 
 ---
 

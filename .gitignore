@@ -11,3 +11,4 @@ backend/.env
 .runtime/
 backend/grounding_worker/.venv/
 IMPROVEMENTS.md
+desktop-dist/

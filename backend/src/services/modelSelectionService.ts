@@ -8,7 +8,9 @@ import type {
   JobModelMetadata,
 } from '../types.js';
 
-const runtimeDir = path.resolve(process.cwd(), '..', '.runtime');
+const runtimeDir = process.env.VIDEO_STUDY_RUNTIME_DIR
+  ? path.resolve(process.env.VIDEO_STUDY_RUNTIME_DIR)
+  : path.resolve(process.cwd(), '..', '.runtime');
 const modelSelectionPath = path.join(runtimeDir, 'model-selection.json');
 const OLLAMA_TAGS_URL = `${appConfig.ollamaBaseUrl}/api/tags`;
 const OLLAMA_TAGS_TIMEOUT_MS = 4_000;

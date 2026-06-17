@@ -236,3 +236,23 @@ export interface HealthResponse {
   lastActivityAt?: string;
   nextShutdownAt?: string;
 }
+
+export type SystemDependencyKind = 'command' | 'file' | 'config';
+
+export interface SystemDependencyStatus {
+  key: string;
+  label: string;
+  kind: SystemDependencyKind;
+  ok: boolean;
+  expected: string;
+  resolvedValue?: string;
+  detail: string;
+  resolutionHint?: string;
+}
+
+export interface SystemDiagnosticsResponse {
+  appMode: 'web' | 'desktop';
+  allRequiredAvailable: boolean;
+  generatedAt: string;
+  dependencies: SystemDependencyStatus[];
+}

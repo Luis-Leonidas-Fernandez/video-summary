@@ -2,8 +2,12 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import type { JobFileEntry } from '../types.js';
 
-export const projectRoot = path.resolve(process.cwd(), '..');
-export const outputRoot = path.join(projectRoot, 'output');
+export const projectRoot = process.env.VIDEO_STUDY_PROJECT_ROOT
+  ? path.resolve(process.env.VIDEO_STUDY_PROJECT_ROOT)
+  : path.resolve(process.cwd(), '..');
+export const outputRoot = process.env.VIDEO_STUDY_OUTPUT_ROOT
+  ? path.resolve(process.env.VIDEO_STUDY_OUTPUT_ROOT)
+  : path.join(projectRoot, 'output');
 
 export async function ensureDir(dirPath: string): Promise<void> {
   await fs.mkdir(dirPath, { recursive: true });

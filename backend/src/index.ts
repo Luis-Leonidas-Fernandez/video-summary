@@ -15,6 +15,7 @@ import { jobQueue } from './services/jobQueue.js';
 import { aiRuntimeManager } from './services/aiRuntimeManager.js';
 import { getHealthResponse } from './services/healthResponse.js';
 import { modelSelectionService } from './services/modelSelectionService.js';
+import { getSystemDiagnostics } from './services/systemDiagnosticsService.js';
 import { ensureDir, outputRoot } from './utils/files.js';
 
 const app = express();
@@ -36,6 +37,10 @@ app.get('/api/system/memory', (_req, res) => {
   const usedMb = totalMb - freeMb;
   const usedPercent = Math.round((usedMb / totalMb) * 100);
   res.json({ totalMb, usedMb, freeMb, usedPercent });
+});
+
+app.get('/api/system/dependencies', async (_req, res) => {
+  res.json(await getSystemDiagnostics());
 });
 
 app.use('/api', modelSelectionRouter);

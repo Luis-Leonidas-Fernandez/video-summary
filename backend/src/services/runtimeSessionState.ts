@@ -8,7 +8,9 @@ interface RuntimeSessionState {
   ollamaStartedByBackend?: boolean;
 }
 
-const runtimeDir = path.resolve(process.cwd(), '..', '.runtime');
+const runtimeDir = process.env.VIDEO_STUDY_RUNTIME_DIR
+  ? path.resolve(process.env.VIDEO_STUDY_RUNTIME_DIR)
+  : path.resolve(process.cwd(), '..', '.runtime');
 const runtimeStatePath = path.join(runtimeDir, 'dev-state.json');
 
 async function ensureRuntimeDir(): Promise<void> {

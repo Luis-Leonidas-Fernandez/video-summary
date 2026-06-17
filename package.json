@@ -2,12 +2,69 @@
   "name": "video-study-tool",
   "version": "1.0.0",
   "private": true,
+  "main": "desktop/main.cjs",
   "scripts": {
     "dev": "node ./scripts/dev.mjs",
     "dev:backend": "npm --prefix backend run dev",
     "dev:frontend": "npm --prefix frontend run dev",
+    "desktop:dev": "node ./desktop/dev.mjs",
+    "desktop:build": "npm --prefix backend run build && npm --prefix frontend run build",
+    "desktop:package": "npm run desktop:build && electron-builder --mac",
+    "desktop:package:dir": "npm run desktop:build && electron-builder --dir --mac",
     "install:all": "npm --prefix backend install && npm --prefix frontend install",
     "cleanup": "node ./scripts/cleanup.mjs",
     "cleanup:all": "node ./scripts/cleanup.mjs --include-ollama"
+  },
+  "devDependencies": {
+    "electron": "^42.4.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.luis.videostudytool",
+    "productName": "Video Study Tool",
+    "directories": {
+      "output": "desktop-dist"
+    },
+    "files": [
+      "desktop/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "frontend/dist",
+        "to": "frontend-dist"
+      },
+      {
+        "from": "backend/package.json",
+        "to": "backend/package.json"
+      },
+      {
+        "from": "backend/dist",
+        "to": "backend/dist"
+      },
+      {
+        "from": "backend/node_modules",
+        "to": "backend/node_modules"
+      },
+      {
+        "from": "backend/.env",
+        "to": "backend/.env"
+      },
+      {
+        "from": "backend/grounding_worker",
+        "to": "backend/grounding_worker",
+        "filter": [
+          "**/*",
+          "!**/.venv{,/**}"
+        ]
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
+    }
   }
 }
