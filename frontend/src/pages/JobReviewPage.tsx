@@ -5,26 +5,20 @@ import { GroundingSummary } from '../components/GroundingSummary';
 import { JobResourceUsagePanel } from '../components/JobResourceUsagePanel';
 import { SummaryPreview } from '../components/SummaryPreview';
 import { ValidationSummary } from '../components/ValidationSummary';
-import { downloadBatchWordZip } from '../api';
 import { useJobArtifacts } from '../hooks/useJobArtifacts';
 import { useJobSession } from '../hooks/useJobSession';
 import {
   getJobModeLabel,
   getSelectedItem,
   getWorkflowHeadline,
-  hasBatchWordExports,
   pickDefaultItemId,
 } from '../job-ui';
 import { deriveJobHealth } from '../presentation';
-
-type BatchZipDownloadState = 'idle' | 'downloading' | 'success' | 'error';
 
 export function JobReviewPage() {
   const { jobId } = useParams<{ jobId: string }>();
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [areLogsCollapsed, setAreLogsCollapsed] = useState(false);
-  const [batchZipDownloadState, setBatchZipDownloadState] = useState<BatchZipDownloadState>('idle');
-  const [batchZipDownloadMessage, setBatchZipDownloadMessage] = useState<string | null>(null);
   const itemSelectionPinnedRef = useRef(false);
   const {
     job,
@@ -70,7 +64,6 @@ export function JobReviewPage() {
   }, [job?.status]);
 
   const selectedItem = useMemo(() => getSelectedItem(job, selectedItemId), [job, selectedItemId]);
-  const hasBatchWordZip = useMemo(() => hasBatchWordExports(job), [job]);
   const jobHealth = useMemo(
     () => deriveJobHealth(job, groundingReport, validationReport),
     [job, groundingReport, validationReport],
@@ -96,33 +89,6 @@ export function JobReviewPage() {
   const handleSelectItem = (itemId: string) => {
     itemSelectionPinnedRef.current = true;
     setSelectedItemId(itemId);
-  };
-
-  const handleBatchWordZipDownload = async () => {
-    if (!job) {
-      return;
-    }
-
-    setBatchZipDownloadState('downloading');
-    setBatchZipDownloadMessage('Preparando el ZIP con los Word del lote...');
-
-    try {
-      const { blob, filename } = await downloadBatchWordZip(job.id);
-      const objectUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = objectUrl;
-      anchor.download = filename;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-
-      setBatchZipDownloadState('success');
-      setBatchZipDownloadMessage('ZIP generado y descarga iniciada. Si querés, podés volver a descargarlo.');
-    } catch (nextError) {
-      setBatchZipDownloadState('error');
-      setBatchZipDownloadMessage(nextError instanceof Error ? nextError.message : 'No se pudo descargar el ZIP de Word.');
-    }
   };
 
   if (!jobId) {
@@ -222,45 +188,9 @@ export function JobReviewPage() {
             <p className="panel-caption">La selección del item vive solo en esta página. No toca la URL en esta iteración.</p>
           </div>
           <div className="panel-actions">
-            {hasBatchWordZip ? (
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() => void handleBatchWordZipDownload()}
-                disabled={batchZipDownloadState === 'downloading'}
-              >
-                {batchZipDownloadState === 'downloading'
-                  ? 'Generando ZIP...'
-                  : batchZipDownloadState === 'success'
-                    ? 'Volver a descargar ZIP'
-                    : 'Descargar todos los Word (.zip)'}
-              </button>
-            ) : null}
             {selectedItem ? <span className="subtle-pill">Item activo: {selectedItem.itemId}</span> : null}
           </div>
         </div>
-
-        {hasBatchWordZip && batchZipDownloadMessage ? (
-          <div
-            className={[
-              'inline-alert',
-              batchZipDownloadState === 'error'
-                ? 'inline-alert-danger'
-                : batchZipDownloadState === 'success'
-                  ? 'inline-alert-success'
-                  : 'inline-alert-info',
-            ].join(' ')}
-          >
-            <strong>
-              {batchZipDownloadState === 'downloading'
-                ? 'Descargando ZIP...'
-                : batchZipDownloadState === 'success'
-                  ? 'Descarga iniciada'
-                  : 'No se pudo descargar el ZIP'}
-            </strong>
-            <p>{batchZipDownloadMessage}</p>
-          </div>
-        ) : null}
 
         {job.items?.length ? (
           <div className="item-selector-list">

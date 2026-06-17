@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import type { BatchJobItem, JobResponse, ResourceUsageScope } from '../api';
+import { downloadBatchWordZip, type BatchJobItem, type JobResponse, type ResourceUsageScope } from '../api';
+import { hasBatchWordExports } from '../job-ui';
 import type { JobHealthInfo } from '../presentation';
 
 interface JobStatusProps {
@@ -17,6 +19,7 @@ interface JobStatusProps {
 
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'completed_with_warnings', 'failed', 'cancelled']);
 const REUSABLE_JOB_STATUSES = new Set(['completed', 'completed_with_warnings']);
+type BatchZipDownloadState = 'idle' | 'downloading' | 'success' | 'error';
 
 function getStatusLabel(status: JobResponse['status'] | undefined): string {
   if (!status) {
@@ -171,11 +174,41 @@ export function JobStatus({
   onSelectItem,
   reviewUrl,
 }: JobStatusProps) {
+  const [batchZipDownloadState, setBatchZipDownloadState] = useState<BatchZipDownloadState>('idle');
+  const [batchZipDownloadMessage, setBatchZipDownloadMessage] = useState<string | null>(null);
   const userFacingJobError = job?.error?.split('\n')[0];
   const statusLabel = getStatusLabel(job?.status);
   const canCancel = job != null && !TERMINAL_JOB_STATUSES.has(job.status) && job.status !== 'cancelling';
   const canReprocess = job != null && REUSABLE_JOB_STATUSES.has(job.status) && job.inputMode === 'single_url';
   const selectedItem = job?.items?.find((item) => item.itemId === selectedItemId) ?? null;
+  const canDownloadBatchWordZip = hasBatchWordExports(job);
+
+  const handleBatchWordZipDownload = async () => {
+    if (!job) {
+      return;
+    }
+
+    setBatchZipDownloadState('downloading');
+    setBatchZipDownloadMessage('Preparando el ZIP con los Word del lote...');
+
+    try {
+      const { blob, filename } = await downloadBatchWordZip(job.id);
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+
+      setBatchZipDownloadState('success');
+      setBatchZipDownloadMessage('ZIP generado y descarga iniciada. Si querés, podés volver a descargarlo.');
+    } catch (nextError) {
+      setBatchZipDownloadState('error');
+      setBatchZipDownloadMessage(nextError instanceof Error ? nextError.message : 'No se pudo descargar el ZIP de Word.');
+    }
+  };
 
   return (
     <section className="panel job-status-panel">
@@ -186,6 +219,20 @@ export function JobStatus({
           <p className="panel-caption">Operación primero: estado, health, progreso, lote y acciones. Lo forense queda más abajo.</p>
         </div>
         <div className="panel-actions">
+          {canDownloadBatchWordZip ? (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void handleBatchWordZipDownload()}
+              disabled={batchZipDownloadState === 'downloading'}
+            >
+              {batchZipDownloadState === 'downloading'
+                ? 'Generando ZIP...'
+                : batchZipDownloadState === 'success'
+                  ? 'Volver a descargar ZIP'
+                  : 'Descargar todos los Word (.zip)'}
+            </button>
+          ) : null}
           {reviewUrl ? (
             <Link to={reviewUrl} className="secondary-button button-link">
               Abrir revisión completa
@@ -287,6 +334,28 @@ export function JobStatus({
               <p>
                 Fuente {selectedItem.detectedSourceLanguage ?? 'sin dato'} · salida {getTranslationStatusLabel(selectedItem.translationStatus)} · claims {selectedItem.claimsValidated ?? 0} · unsupported {selectedItem.unsupportedClaimCount ?? 0} · citas inválidas {selectedItem.invalidCitationCount ?? 0} · ventanas comprimidas {selectedItem.windowsTooCompressed ?? 0}
               </p>
+            </div>
+          ) : null}
+
+          {canDownloadBatchWordZip && batchZipDownloadMessage ? (
+            <div
+              className={[
+                'inline-alert',
+                batchZipDownloadState === 'error'
+                  ? 'inline-alert-danger'
+                  : batchZipDownloadState === 'success'
+                    ? 'inline-alert-success'
+                    : 'inline-alert-info',
+              ].join(' ')}
+            >
+              <strong>
+                {batchZipDownloadState === 'downloading'
+                  ? 'Descargando ZIP...'
+                  : batchZipDownloadState === 'success'
+                    ? 'Descarga iniciada'
+                    : 'No se pudo descargar el ZIP'}
+              </strong>
+              <p>{batchZipDownloadMessage}</p>
             </div>
           ) : null}
 
