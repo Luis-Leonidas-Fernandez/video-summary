@@ -54,7 +54,9 @@ function paragraph(text: string): Paragraph {
   });
 }
 
-function heading(text: string, level: HeadingLevel): Paragraph {
+type HeadingLevelValue = (typeof HeadingLevel)[keyof typeof HeadingLevel];
+
+function heading(text: string, level: HeadingLevelValue): Paragraph {
   return new Paragraph({
     text,
     heading: level,

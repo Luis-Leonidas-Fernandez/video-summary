@@ -142,7 +142,7 @@ export function JobReviewPage() {
         <div className="review-header-topline">
           <Link to="/" className="ghost-button button-link">← Volver a operación</Link>
           <div className="status-badges">
-            <span className={`status-pill status-${job.status}`}>{job.status.replaceAll('_', ' ')}</span>
+            <span className={`status-pill status-${job.status}`}>{job.status.replace(/_/g, ' ')}</span>
             {jobHealth ? <span className={`status-pill health-pill health-${jobHealth.status}`}>Health: {jobHealth.label}</span> : null}
           </div>
         </div>

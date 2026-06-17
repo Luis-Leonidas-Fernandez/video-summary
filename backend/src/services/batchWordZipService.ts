@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
-import archiver from 'archiver';
+import { ZipArchive } from 'archiver';
 import type { Response } from 'express';
 import type { JobRecord } from '../types.js';
 
@@ -87,7 +87,7 @@ export async function streamBatchStudyNotesZip(job: JobRecord, res: Response): P
     throw new Error('No hay archivos study_notes_es.docx disponibles para este lote.');
   }
 
-  const archive = archiver('zip', {
+  const archive = new ZipArchive({
     zlib: { level: 9 },
   });
 
@@ -95,13 +95,13 @@ export async function streamBatchStudyNotesZip(job: JobRecord, res: Response): P
   res.setHeader('Content-Type', 'application/zip');
   res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
 
-  archive.on('warning', (error) => {
+  archive.on('warning', (error: NodeJS.ErrnoException) => {
     if (error.code !== 'ENOENT') {
       res.destroy(error);
     }
   });
 
-  archive.on('error', (error) => {
+  archive.on('error', (error: Error) => {
     res.destroy(error);
   });
 

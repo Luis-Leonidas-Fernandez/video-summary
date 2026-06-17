@@ -127,7 +127,7 @@ export function OperationsPage() {
           <div className="hero-stat-grid">
             <div className="hero-stat-card">
               <span className="hero-stat-label">Estado</span>
-              <strong className="hero-stat-value">{job ? job.status.replaceAll('_', ' ') : isLoadingJob ? 'loading' : 'idle'}</strong>
+              <strong className="hero-stat-value">{job ? job.status.replace(/_/g, ' ') : isLoadingJob ? 'loading' : 'idle'}</strong>
               <span className="hero-stat-meta">{heroStatusLabel}</span>
             </div>
             <div className="hero-stat-card">
