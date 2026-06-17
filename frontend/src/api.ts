@@ -436,3 +436,17 @@ export async function getSystemMemory(): Promise<SystemMemoryResponse> {
 export async function getSystemDiagnostics(): Promise<SystemDiagnosticsResponse> {
   return fetchJson<SystemDiagnosticsResponse>('/api/system/dependencies');
 }
+
+export async function downloadBatchWordZip(jobId: string): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetch(resolveApiUrl(`/api/jobs/${jobId}/download/study-notes.zip`));
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `Zip request failed with status ${response.status}`);
+  }
+
+  const contentDisposition = response.headers.get('content-disposition') ?? '';
+  const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+  const filename = filenameMatch?.[1] ?? `job_${jobId}_study_notes_es.zip`;
+  const blob = await response.blob();
+  return { blob, filename };
+}

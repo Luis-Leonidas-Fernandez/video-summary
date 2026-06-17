@@ -1341,6 +1341,12 @@ h3 {
   background: rgba(30, 41, 59, 0.72);
 }
 
+.inline-alert-success {
+  border-color: rgba(74, 222, 128, 0.28);
+  background: rgba(20, 83, 45, 0.26);
+  color: #dcfce7;
+}
+
 .hero-stat-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
