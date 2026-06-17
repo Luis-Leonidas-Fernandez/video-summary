@@ -6,6 +6,7 @@ import {
   type LocalModelInfo,
   type ModelSelectionResponse,
 } from '../api';
+import { getDesktopBridge } from '../desktop';
 
 interface AiRuntimeBannerProps {
   health: HealthResponse | null;
@@ -69,6 +70,7 @@ function findSelectedModel(selection: ModelSelectionResponse | null): LocalModel
 }
 
 export function AiRuntimeBanner({ health, error, onRefreshHealth }: AiRuntimeBannerProps) {
+  const desktopBridge = getDesktopBridge();
   const [selection, setSelection] = useState<ModelSelectionResponse | null>(null);
   const [selectionError, setSelectionError] = useState<string | null>(null);
   const [isSelectionLoading, setIsSelectionLoading] = useState(false);
@@ -141,11 +143,13 @@ export function AiRuntimeBanner({ health, error, onRefreshHealth }: AiRuntimeBan
         <div>
           <p className="eyebrow">Top control bar</p>
           <h2>Runtime de IA</h2>
-          <p className="panel-caption">{message}</p>
+          <p className="panel-caption">Estado global, modelo activo y cambio de runtime para jobs futuros.</p>
+          <p className="runtime-runtime-message">{message}</p>
         </div>
         <div className="status-badges">
           {health ? <span className={`status-pill status-${health.aiRuntime}`}>{health.aiRuntime}</span> : null}
           {selection ? <span className="status-pill subtle-pill">{selection.source === 'runtime_state' ? 'Selección persistida' : 'Default .env'}</span> : null}
+          {desktopBridge ? <span className="status-pill subtle-pill">Desktop {desktopBridge.platform}</span> : null}
         </div>
       </div>
 
@@ -173,7 +177,7 @@ export function AiRuntimeBanner({ health, error, onRefreshHealth }: AiRuntimeBan
           <div className="model-selection-header">
             <div>
               <strong>Modelo LLM principal</strong>
-              <p className="panel-caption">Cambia el modelo global para jobs futuros. No toca embeddings ni Whisper.</p>
+              <p className="panel-caption">Cambialo sin tocar embeddings ni Whisper. Solo afecta jobs futuros.</p>
             </div>
           </div>
 
@@ -200,6 +204,7 @@ export function AiRuntimeBanner({ health, error, onRefreshHealth }: AiRuntimeBan
           {selection ? (
             <div className="model-selection-meta">
               <span>Activo: {selection.activeModel}</span>
+              <span>Default: {selection.defaultModel}</span>
               {!selection.activeModelAvailable ? <span>Modelo activo no verificado ahora mismo.</span> : null}
             </div>
           ) : null}

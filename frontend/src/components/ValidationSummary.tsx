@@ -1,4 +1,5 @@
 import type { JobFile, ValidationReport } from '../api';
+import { resolveApiUrl } from '../desktop';
 
 interface ValidationSummaryProps {
   report: ValidationReport | null;
@@ -111,12 +112,12 @@ export function ValidationSummary({ report, files, isLoading }: ValidationSummar
 
                 <div className="validation-links">
                   {transcriptionFile ? (
-                    <a href={transcriptionFile.downloadUrl} target="_blank" rel="noreferrer">
+                    <a href={resolveApiUrl(transcriptionFile.downloadUrl)} target="_blank" rel="noreferrer">
                       Ver transcripción
                     </a>
                   ) : null}
                   {extractionFile ? (
-                    <a href={extractionFile.downloadUrl} target="_blank" rel="noreferrer">
+                    <a href={resolveApiUrl(extractionFile.downloadUrl)} target="_blank" rel="noreferrer">
                       Ver extracción
                     </a>
                   ) : null}

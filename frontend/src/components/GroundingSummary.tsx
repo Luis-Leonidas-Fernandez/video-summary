@@ -1,4 +1,5 @@
 import type { GroundingReport, JobFile } from '../api';
+import { resolveApiUrl } from '../desktop';
 import { summarizeGrounding, type JobHealthInfo } from '../presentation';
 
 interface GroundingSummaryProps {
@@ -219,13 +220,13 @@ export function GroundingSummary({ report, files, isLoading, health }: Grounding
                             <>
                               <br />
                               {rawInvalidFile ? (
-                                <a href={rawInvalidFile.downloadUrl} target="_blank" rel="noreferrer">
+                                <a href={resolveApiUrl(rawInvalidFile.downloadUrl)} target="_blank" rel="noreferrer">
                                   Ver raw inválido
                                 </a>
                               ) : null}
                               {rawInvalidFile && recoveredJsonFile ? ' · ' : null}
                               {recoveredJsonFile ? (
-                                <a href={recoveredJsonFile.downloadUrl} target="_blank" rel="noreferrer">
+                                <a href={resolveApiUrl(recoveredJsonFile.downloadUrl)} target="_blank" rel="noreferrer">
                                   Ver JSON recuperado
                                 </a>
                               ) : null}
@@ -239,22 +240,22 @@ export function GroundingSummary({ report, files, isLoading, health }: Grounding
 
                 <div className="validation-links">
                   {claimsFile ? (
-                    <a href={claimsFile.downloadUrl} target="_blank" rel="noreferrer">
+                    <a href={resolveApiUrl(claimsFile.downloadUrl)} target="_blank" rel="noreferrer">
                       Ver claims
                     </a>
                   ) : null}
                   {evidenceFile ? (
-                    <a href={evidenceFile.downloadUrl} target="_blank" rel="noreferrer">
+                    <a href={resolveApiUrl(evidenceFile.downloadUrl)} target="_blank" rel="noreferrer">
                       Ver evidencia
                     </a>
                   ) : null}
                   {integrityFile ? (
-                    <a href={integrityFile.downloadUrl} target="_blank" rel="noreferrer">
+                    <a href={resolveApiUrl(integrityFile.downloadUrl)} target="_blank" rel="noreferrer">
                       Ver integridad
                     </a>
                   ) : null}
                   {extractionFile ? (
-                    <a href={extractionFile.downloadUrl} target="_blank" rel="noreferrer">
+                    <a href={resolveApiUrl(extractionFile.downloadUrl)} target="_blank" rel="noreferrer">
                       Ver extracción
                     </a>
                   ) : null}

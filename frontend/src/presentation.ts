@@ -27,6 +27,7 @@ export interface CategorizedJobFile extends JobFile {
 
 const PRIMARY_READING_PATTERNS = [
   /^full_study_notes_es\.txt$/i,
+  /^study_notes_es\.docx$/i,
   /^summary_es\.txt$/i,
   /^translation_part_/i,
   /^transcription_part_/i,
@@ -243,10 +244,11 @@ function categorizeFile(file: JobFile): ArtifactCategory {
 function getFilePriority(file: JobFile): number {
   const normalized = getFileName(file).toLowerCase();
   if (normalized === 'full_study_notes_es.txt') return 0;
-  if (normalized === 'summary_es.txt') return 1;
-  if (normalized === 'grounding_report.json') return 2;
-  if (normalized.includes('coverage') || normalized.includes('resource')) return 3;
-  if (normalized.includes('log')) return 4;
+  if (normalized === 'study_notes_es.docx') return 1;
+  if (normalized === 'summary_es.txt') return 2;
+  if (normalized === 'grounding_report.json') return 3;
+  if (normalized.includes('coverage') || normalized.includes('resource')) return 4;
+  if (normalized.includes('log')) return 5;
   return 10;
 }
 

@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import type { BatchJobItem, JobResponse, ResourceUsageScope } from '../api';
 import type { JobHealthInfo } from '../presentation';
 
@@ -11,6 +12,7 @@ interface JobStatusProps {
   health: JobHealthInfo | null;
   selectedItemId: string | null;
   onSelectItem: (itemId: string) => void | Promise<void>;
+  reviewUrl?: string | null;
 }
 
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'completed_with_warnings', 'failed', 'cancelled']);
@@ -167,6 +169,7 @@ export function JobStatus({
   health,
   selectedItemId,
   onSelectItem,
+  reviewUrl,
 }: JobStatusProps) {
   const userFacingJobError = job?.error?.split('\n')[0];
   const statusLabel = getStatusLabel(job?.status);
@@ -183,6 +186,11 @@ export function JobStatus({
           <p className="panel-caption">Operación primero: estado, health, progreso, lote y acciones. Lo forense queda más abajo.</p>
         </div>
         <div className="panel-actions">
+          {reviewUrl ? (
+            <Link to={reviewUrl} className="secondary-button button-link">
+              Abrir revisión completa
+            </Link>
+          ) : null}
           {canReprocess ? (
             <button
               type="button"
@@ -311,9 +319,15 @@ export function JobStatus({
                     >
                       <span className="item-chip-index">{item.itemId}</span>
                       <span className={`item-chip-status item-chip-status-${item.status}`}>{getItemStatusLabel(item.status)}</span>
-                      <span className="item-chip-url">{item.sourceUrl}</span>
-                      <span className="item-chip-url">{getGroundingStatusLabel(item)} · {getTranscriptionQualityLabel(item)} · {getTranslationStatusLabel(item.translationStatus)}</span>
-                      {typeof item.progress === 'number' ? <span className="item-chip-progress">{Math.round(item.progress)}%</span> : null}
+                      <div className="item-chip-body">
+                        <span className="item-chip-url">{item.sourceUrl}</span>
+                        <span className="item-chip-meta">
+                          {getGroundingStatusLabel(item)} · {getTranscriptionQualityLabel(item)} · {getTranslationStatusLabel(item.translationStatus)}
+                        </span>
+                      </div>
+                      <span className="item-chip-progress">
+                        {typeof item.progress === 'number' ? `${Math.round(item.progress)}%` : '—'}
+                      </span>
                     </button>
                   );
                 })}

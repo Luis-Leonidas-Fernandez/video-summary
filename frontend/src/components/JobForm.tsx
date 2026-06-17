@@ -73,11 +73,11 @@ export function JobForm({ isSubmitting, onSubmit }: JobFormProps) {
   const submitLabel = useMemo(() => {
     switch (form.inputMode) {
       case 'playlist':
-        return isSubmitting ? 'Creando lote...' : 'Procesar playlist';
+        return isSubmitting ? 'Creando lote...' : 'Crear playlist';
       case 'url_list':
-        return isSubmitting ? 'Creando lote...' : 'Procesar lote';
+        return isSubmitting ? 'Creando lote...' : 'Crear lote';
       default:
-        return isSubmitting ? 'Encolando procesamiento...' : 'Procesar video';
+        return isSubmitting ? 'Creando...' : 'Crear video';
     }
   }, [form.inputMode, isSubmitting]);
 
@@ -92,7 +92,7 @@ export function JobForm({ isSubmitting, onSubmit }: JobFormProps) {
         <div>
           <p className="eyebrow">Primary workflow</p>
           <h2>Nuevo procesamiento</h2>
-          <p className="panel-caption">Elegí si querés un video único, una lista manual o una playlist. El pipeline interno sigue aislando cada item.</p>
+          <p className="panel-caption">Elegí una fuente, definí idioma/salidas y lanzá el pipeline. Cada item se procesa aislado aunque venga en lote.</p>
         </div>
       </div>
 

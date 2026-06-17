@@ -1,3 +1,5 @@
+import { resolveApiUrl } from './desktop';
+
 export type JobStatus =
   | 'pending'
   | 'queued'
@@ -329,8 +331,27 @@ export interface SystemMemoryResponse {
   usedPercent: number;
 }
 
+export interface SystemDependencyStatus {
+  key: string;
+  label: string;
+  kind: 'command' | 'file' | 'config';
+  ok: boolean;
+  expected: string;
+  resolvedValue?: string;
+  detail: string;
+  resolutionHint?: string;
+}
+
+export interface SystemDiagnosticsResponse {
+  appMode: 'web' | 'desktop';
+  allRequiredAvailable: boolean;
+  generatedAt: string;
+  dependencies: SystemDependencyStatus[];
+}
+
 async function fetchJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
-  const response = await fetch(input, init);
+  const resolvedInput = typeof input === 'string' ? resolveApiUrl(input) : input;
+  const response = await fetch(resolvedInput, init);
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || `Request failed with status ${response.status}`);
@@ -363,7 +384,7 @@ export async function getJobFileContent(jobId: string, filename: string, itemId?
   const endpoint = itemId
     ? `/api/jobs/${jobId}/items/${encodeURIComponent(itemId)}/files/${encodedFilename}`
     : `/api/jobs/${jobId}/files/${encodedFilename}`;
-  const response = await fetch(endpoint);
+  const response = await fetch(resolveApiUrl(endpoint));
   if (!response.ok) {
     const message = await response.text();
     throw new Error(message || `File request failed with status ${response.status}`);
@@ -400,4 +421,8 @@ export async function updateModelSelection(model: string): Promise<ModelSelectio
 
 export async function getSystemMemory(): Promise<SystemMemoryResponse> {
   return fetchJson<SystemMemoryResponse>('/api/system/memory');
+}
+
+export async function getSystemDiagnostics(): Promise<SystemDiagnosticsResponse> {
+  return fetchJson<SystemDiagnosticsResponse>('/api/system/dependencies');
 }

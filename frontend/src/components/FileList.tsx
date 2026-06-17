@@ -1,4 +1,5 @@
 import type { JobFile } from '../api';
+import { resolveApiUrl } from '../desktop';
 import { sortAndCategorizeFiles, type ArtifactCategory } from '../presentation';
 
 interface FileListProps {
@@ -35,6 +36,14 @@ function formatFileSize(size: number): string {
 
 function getDisplayName(file: JobFile): string {
   return file.relativePath || file.filename || file.name;
+}
+
+function isWordDocument(file: JobFile): boolean {
+  return getDisplayName(file).toLowerCase().endsWith('.docx');
+}
+
+function getDownloadHref(file: JobFile): string {
+  return resolveApiUrl(file.downloadUrl);
 }
 
 export function FileList({ files, title = 'Archivos generados' }: FileListProps) {
@@ -75,7 +84,7 @@ export function FileList({ files, title = 'Archivos generados' }: FileListProps)
                   <li key={`${file.itemId ?? 'job'}-${file.relativePath}`} className="file-list-item">
                     <div>
                       <div className="file-list-title-row">
-                        <a href={file.downloadUrl} target="_blank" rel="noreferrer">
+                        <a href={getDownloadHref(file)} target={isWordDocument(file) ? undefined : '_blank'} rel="noreferrer" download={isWordDocument(file) ? file.filename : undefined}>
                           {getDisplayName(file)}
                         </a>
                         <span className={`artifact-badge artifact-${file.category}`}>{file.category}</span>
@@ -104,7 +113,7 @@ export function FileList({ files, title = 'Archivos generados' }: FileListProps)
                         <li key={`${file.itemId ?? 'job'}-${file.relativePath}`} className="file-list-item">
                           <div>
                             <div className="file-list-title-row">
-                              <a href={file.downloadUrl} target="_blank" rel="noreferrer">
+                              <a href={getDownloadHref(file)} target={isWordDocument(file) ? undefined : '_blank'} rel="noreferrer" download={isWordDocument(file) ? file.filename : undefined}>
                                 {getDisplayName(file)}
                               </a>
                               <span className={`artifact-badge artifact-${file.category}`}>{file.category}</span>
