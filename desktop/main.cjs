@@ -63,6 +63,10 @@ function splashPath() {
   return path.join(__dirname, 'splash.html');
 }
 
+function appIconPath() {
+  return path.join(__dirname, 'assets', 'icon_1024.png');
+}
+
 function backendEnv() {
   const currentPathEntries = String(process.env.PATH || '')
     .split(path.delimiter)
@@ -118,6 +122,7 @@ function createSplashWindow() {
   splashWindow = new BrowserWindow({
     width: 460,
     height: 320,
+    icon: appIconPath(),
     frame: false,
     resizable: false,
     movable: true,
@@ -140,6 +145,7 @@ function createMainWindow() {
     height: 980,
     minWidth: 1120,
     minHeight: 760,
+    icon: appIconPath(),
     show: false,
     backgroundColor: '#08111f',
     title: 'Video Study Tool',
@@ -373,6 +379,9 @@ async function shutdownBackend() {
 
 async function bootDesktopShell() {
   createSplashWindow();
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.setIcon(appIconPath());
+  }
   await ensureOllamaReady();
   await ensureBackendReady();
   createMainWindow();
