@@ -115,6 +115,16 @@ export function OperationsPage() {
             <span className="subtle-pill">Modelo: {health?.ollamaModel ?? job?.modelMetadata?.ollamaModelUsed ?? 'sin dato'}</span>
             <span className="subtle-pill">Salidas: {enabledOutputsLabel}</span>
           </div>
+          <div className="panel-actions hero-actions">
+            <Link to="/jobs" className="secondary-button button-link">
+              Ver todos los jobs
+            </Link>
+            {reviewUrl && reviewCtaLabel ? (
+              <Link to={reviewUrl} className="secondary-button button-link">
+                {reviewCtaLabel}
+              </Link>
+            ) : null}
+          </div>
         </div>
         <div className="hero-aside">
           <span className="hero-kicker">Workflow actual</span>
@@ -182,11 +192,16 @@ export function OperationsPage() {
                   ? 'Cuando quieras mirar el resultado en serio, abrí la página de review del job actual.'
                   : 'Primero creá o restaurá un job. Después vas a poder abrir la revisión completa sin mezclarla con la operación.'}
               </p>
-              {reviewUrl && reviewCtaLabel ? (
-                <Link to={reviewUrl} className="secondary-button button-link">
-                  {reviewCtaLabel}
+              <div className="panel-actions">
+                <Link to="/jobs" className="secondary-button button-link">
+                  Abrir listado de jobs
                 </Link>
-              ) : null}
+                {reviewUrl && reviewCtaLabel ? (
+                  <Link to={reviewUrl} className="secondary-button button-link">
+                    {reviewCtaLabel}
+                  </Link>
+                ) : null}
+              </div>
             </div>
           </section>
         </div>

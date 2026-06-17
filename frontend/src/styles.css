@@ -1035,6 +1035,42 @@ h3 {
   border: 1px solid rgba(148, 163, 184, 0.11);
 }
 
+.hero-actions {
+  margin-top: 1rem;
+}
+
+.jobs-library-hero .hero-aside {
+  gap: 0.85rem;
+}
+
+.jobs-library-grid {
+  display: grid;
+  gap: 1rem;
+}
+
+.jobs-library-card {
+  display: grid;
+  gap: 1rem;
+}
+
+.jobs-library-badges {
+  justify-content: flex-end;
+}
+
+.jobs-library-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
+}
+
+.jobs-library-description {
+  margin: 0;
+}
+
+.jobs-library-actions {
+  justify-content: flex-end;
+}
+
 .review-header-topline {
   display: flex;
   align-items: center;
@@ -1069,7 +1105,8 @@ h3 {
   .content-grid,
   .runtime-topbar-grid,
   .app-hero,
-  .review-header-grid {
+  .review-header-grid,
+  .jobs-library-metrics {
     grid-template-columns: 1fr;
   }
 
@@ -1118,6 +1155,11 @@ h3 {
   .review-header-topline,
   .panel-actions {
     flex-direction: column;
+  }
+
+  .jobs-library-badges,
+  .jobs-library-actions {
+    justify-content: flex-start;
   }
 
   .form-footer .primary-button {

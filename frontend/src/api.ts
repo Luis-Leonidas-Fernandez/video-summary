@@ -378,6 +378,10 @@ export async function createJob(payload: CreateJobPayload): Promise<JobResponse>
   });
 }
 
+export async function listJobs(): Promise<JobResponse[]> {
+  return fetchJson<JobResponse[]>('/api/jobs');
+}
+
 export async function getJob(jobId: string): Promise<JobResponse> {
   return fetchJson<JobResponse>(`/api/jobs/${jobId}`);
 }
@@ -405,6 +409,18 @@ export async function getJobFileContent(jobId: string, filename: string, itemId?
 export async function cancelJob(jobId: string): Promise<JobResponse> {
   return fetchJson<JobResponse>(`/api/jobs/${jobId}/cancel`, {
     method: 'POST',
+  });
+}
+
+export async function deleteJob(jobId: string): Promise<{ ok: true; jobId: string }> {
+  return fetchJson<{ ok: true; jobId: string }>(`/api/jobs/${jobId}`, {
+    method: 'DELETE',
+  });
+}
+
+export async function deleteAllJobs(): Promise<{ ok: true; deletedCount: number }> {
+  return fetchJson<{ ok: true; deletedCount: number }>('/api/jobs', {
+    method: 'DELETE',
   });
 }
 

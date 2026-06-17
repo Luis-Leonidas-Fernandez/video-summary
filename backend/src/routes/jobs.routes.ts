@@ -144,6 +144,21 @@ jobsRouter.post('/', async (req, res) => {
   }
 });
 
+jobsRouter.get('/', async (_req, res) => {
+  const jobs = await jobQueue.listJobsResponses(0);
+  res.json(jobs);
+});
+
+jobsRouter.delete('/', async (_req, res) => {
+  try {
+    const deletedCount = await jobQueue.deleteAllJobs();
+    res.json({ ok: true, deletedCount });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'No se pudieron eliminar los jobs.';
+    res.status(409).json({ error: message });
+  }
+});
+
 jobsRouter.get('/:id', async (req, res) => {
   const job = await jobQueue.resolveJobResponse(req.params.id, DEFAULT_LOG_TAIL);
   if (!job) {
@@ -162,6 +177,21 @@ jobsRouter.post('/:id/cancel', async (req, res) => {
   }
 
   res.json(serializeJob(job));
+});
+
+jobsRouter.delete('/:id', async (req, res) => {
+  try {
+    const deleted = await jobQueue.deleteJob(req.params.id);
+    if (!deleted) {
+      res.status(404).json({ error: 'Job no encontrado.' });
+      return;
+    }
+
+    res.json({ ok: true, jobId: req.params.id });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'No se pudo eliminar el job.';
+    res.status(409).json({ error: message });
+  }
 });
 
 jobsRouter.get('/:id/logs', async (req, res) => {

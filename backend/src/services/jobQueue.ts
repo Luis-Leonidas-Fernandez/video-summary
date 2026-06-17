@@ -267,6 +267,64 @@ class JobQueue {
     return serializeJob(job, tail);
   }
 
+  async listJobsResponses(tail = 0): Promise<JobResponse[]> {
+    let entries: import('node:fs').Dirent[];
+
+    try {
+      entries = await fs.readdir(outputRoot, { withFileTypes: true });
+    } catch {
+      return [];
+    }
+
+    const jobs = await Promise.all(
+      entries
+        .filter((entry) => entry.isDirectory() && entry.name.startsWith('job_'))
+        .map(async (entry) => this.readJobFromDisk(entry.name)),
+    );
+
+    return jobs
+      .filter((job): job is JobRecord => Boolean(job))
+      .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+      .map((job) => serializeJob(job, tail));
+  }
+
+  async deleteJob(id: string): Promise<boolean> {
+    const job = await this.resolveJob(id);
+    if (!job) {
+      return false;
+    }
+
+    if (!TERMINAL_STATUSES.has(job.status)) {
+      throw new Error('No podés eliminar un job que sigue en curso o en cola. Primero cancelalo.');
+    }
+
+    this.queue = this.queue.filter((jobId) => jobId !== id);
+    this.jobs.delete(id);
+    await fs.rm(job.outputDir, { recursive: true, force: true });
+    return true;
+  }
+
+  async deleteAllJobs(): Promise<number> {
+    const activeJob = [...this.jobs.values()].find((job) => !TERMINAL_STATUSES.has(job.status));
+    if (activeJob || this.currentJobId || this.queue.length > 0) {
+      throw new Error('No podés eliminar todos los jobs mientras hay procesamiento activo o en cola.');
+    }
+
+    let entries: import('node:fs').Dirent[];
+
+    try {
+      entries = await fs.readdir(outputRoot, { withFileTypes: true });
+    } catch {
+      return 0;
+    }
+
+    const jobDirs = entries.filter((entry) => entry.isDirectory() && entry.name.startsWith('job_'));
+    await Promise.all(jobDirs.map((entry) => fs.rm(path.join(outputRoot, entry.name), { recursive: true, force: true })));
+    this.jobs.clear();
+    this.queue = [];
+    return jobDirs.length;
+  }
+
   async cancelJob(id: string): Promise<JobRecord | undefined> {
     const job = await this.resolveJob(id);
     if (!job) {
