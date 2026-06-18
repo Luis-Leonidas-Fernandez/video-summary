@@ -466,3 +466,17 @@ export async function downloadBatchWordZip(jobId: string): Promise<{ blob: Blob;
   const blob = await response.blob();
   return { blob, filename };
 }
+
+export async function downloadJobFile(file: JobFile): Promise<{ blob: Blob; filename: string }> {
+  const response = await fetch(resolveApiUrl(file.downloadUrl));
+  if (!response.ok) {
+    const message = await response.text();
+    throw new Error(message || `File request failed with status ${response.status}`);
+  }
+
+  const contentDisposition = response.headers.get('content-disposition') ?? '';
+  const filenameMatch = contentDisposition.match(/filename="?([^"]+)"?/i);
+  const filename = filenameMatch?.[1] ?? file.filename ?? file.name ?? 'download.bin';
+  const blob = await response.blob();
+  return { blob, filename };
+}

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { downloadBatchWordZip, type BatchJobItem, type JobResponse, type ResourceUsageScope } from '../api';
-import { hasBatchWordExports } from '../job-ui';
+import { downloadBatchWordZip, downloadJobFile, type BatchJobItem, type JobResponse, type ResourceUsageScope } from '../api';
+import { getSingleWordExport, hasBatchWordExports } from '../job-ui';
 import type { JobHealthInfo } from '../presentation';
 
 interface JobStatusProps {
@@ -20,6 +20,7 @@ interface JobStatusProps {
 const TERMINAL_JOB_STATUSES = new Set(['completed', 'completed_with_warnings', 'failed', 'cancelled']);
 const REUSABLE_JOB_STATUSES = new Set(['completed', 'completed_with_warnings']);
 type BatchZipDownloadState = 'idle' | 'downloading' | 'success' | 'error';
+type SingleWordDownloadState = 'idle' | 'downloading' | 'success' | 'error';
 
 function getStatusLabel(status: JobResponse['status'] | undefined): string {
   if (!status) {
@@ -176,12 +177,26 @@ export function JobStatus({
 }: JobStatusProps) {
   const [batchZipDownloadState, setBatchZipDownloadState] = useState<BatchZipDownloadState>('idle');
   const [batchZipDownloadMessage, setBatchZipDownloadMessage] = useState<string | null>(null);
+  const [singleWordDownloadState, setSingleWordDownloadState] = useState<SingleWordDownloadState>('idle');
+  const [singleWordDownloadMessage, setSingleWordDownloadMessage] = useState<string | null>(null);
   const userFacingJobError = job?.error?.split('\n')[0];
   const statusLabel = getStatusLabel(job?.status);
   const canCancel = job != null && !TERMINAL_JOB_STATUSES.has(job.status) && job.status !== 'cancelling';
   const canReprocess = job != null && REUSABLE_JOB_STATUSES.has(job.status) && job.inputMode === 'single_url';
   const selectedItem = job?.items?.find((item) => item.itemId === selectedItemId) ?? null;
   const canDownloadBatchWordZip = hasBatchWordExports(job);
+  const singleWordExport = getSingleWordExport(job);
+
+  const triggerBlobDownload = (blob: Blob, filename: string) => {
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+  };
 
   const handleBatchWordZipDownload = async () => {
     if (!job) {
@@ -193,20 +208,31 @@ export function JobStatus({
 
     try {
       const { blob, filename } = await downloadBatchWordZip(job.id);
-      const objectUrl = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = objectUrl;
-      anchor.download = filename;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-
+      triggerBlobDownload(blob, filename);
       setBatchZipDownloadState('success');
       setBatchZipDownloadMessage('ZIP generado y descarga iniciada. Si querés, podés volver a descargarlo.');
     } catch (nextError) {
       setBatchZipDownloadState('error');
       setBatchZipDownloadMessage(nextError instanceof Error ? nextError.message : 'No se pudo descargar el ZIP de Word.');
+    }
+  };
+
+  const handleSingleWordDownload = async () => {
+    if (!singleWordExport) {
+      return;
+    }
+
+    setSingleWordDownloadState('downloading');
+    setSingleWordDownloadMessage('Preparando el Word final del video...');
+
+    try {
+      const { blob, filename } = await downloadJobFile(singleWordExport);
+      triggerBlobDownload(blob, filename);
+      setSingleWordDownloadState('success');
+      setSingleWordDownloadMessage('Descarga iniciada. Si querés, podés volver a bajar el Word.');
+    } catch (nextError) {
+      setSingleWordDownloadState('error');
+      setSingleWordDownloadMessage(nextError instanceof Error ? nextError.message : 'No se pudo descargar el Word.');
     }
   };
 
@@ -219,6 +245,20 @@ export function JobStatus({
           <p className="panel-caption">Operación primero: estado, health, progreso, lote y acciones. Lo forense queda más abajo.</p>
         </div>
         <div className="panel-actions">
+          {singleWordExport ? (
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => void handleSingleWordDownload()}
+              disabled={singleWordDownloadState === 'downloading'}
+            >
+              {singleWordDownloadState === 'downloading'
+                ? 'Preparando Word...'
+                : singleWordDownloadState === 'success'
+                  ? 'Volver a descargar Word'
+                  : 'Descargar Word (.docx)'}
+            </button>
+          ) : null}
           {canDownloadBatchWordZip ? (
             <button
               type="button"
@@ -356,6 +396,28 @@ export function JobStatus({
                     : 'No se pudo descargar el ZIP'}
               </strong>
               <p>{batchZipDownloadMessage}</p>
+            </div>
+          ) : null}
+
+          {singleWordExport && singleWordDownloadMessage ? (
+            <div
+              className={[
+                'inline-alert',
+                singleWordDownloadState === 'error'
+                  ? 'inline-alert-danger'
+                  : singleWordDownloadState === 'success'
+                    ? 'inline-alert-success'
+                    : 'inline-alert-info',
+              ].join(' ')}
+            >
+              <strong>
+                {singleWordDownloadState === 'downloading'
+                  ? 'Descargando Word...'
+                  : singleWordDownloadState === 'success'
+                    ? 'Descarga iniciada'
+                    : 'No se pudo descargar el Word'}
+              </strong>
+              <p>{singleWordDownloadMessage}</p>
             </div>
           ) : null}
 

@@ -1,4 +1,4 @@
-import type { JobResponse } from './api';
+import type { JobFile, JobResponse } from './api';
 
 const STUDY_NOTES_DOCX_FILE = 'study_notes_es.docx';
 
@@ -88,14 +88,26 @@ function getFileName(file: { filename?: string; name?: string; relativePath?: st
   return (file.filename || file.name || file.relativePath || '').toLowerCase();
 }
 
+function isStudyNotesWordFile(file: { filename?: string; name?: string; relativePath?: string }): boolean {
+  return getFileName(file).endsWith(STUDY_NOTES_DOCX_FILE);
+}
+
 export function hasBatchWordExports(job: JobResponse | null): boolean {
   if (!job?.items?.length || job.inputMode === 'single_url') {
     return false;
   }
 
   return job.items.some((item) =>
-    item.files.some((file) => getFileName(file).endsWith(STUDY_NOTES_DOCX_FILE)),
+    item.files.some((file) => isStudyNotesWordFile(file)),
   );
+}
+
+export function getSingleWordExport(job: JobResponse | null): JobFile | null {
+  if (!job || job.inputMode !== 'single_url') {
+    return null;
+  }
+
+  return job.files.find((file) => isStudyNotesWordFile(file)) ?? null;
 }
 
 export function buildBatchWordZipDownloadUrl(jobId: string): string {
