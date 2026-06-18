@@ -82,6 +82,8 @@ export const appConfig = {
   ollamaBinary: process.env.OLLAMA_BINARY ?? 'ollama',
   ffmpegBinary: process.env.FFMPEG_BINARY ?? 'ffmpeg',
   ytDlpBinary: process.env.YT_DLP_BINARY ?? 'yt-dlp',
+  ytDlpMaxAgeDays: Number(process.env.YT_DLP_MAX_AGE_DAYS ?? 90),
+  ytDlpAutoUpdate: (process.env.YT_DLP_AUTO_UPDATE ?? 'true') !== 'false',
   whisperCppBinary: process.env.WHISPER_CPP_BINARY ?? 'whisper-cli',
   whisperCppModelPath: process.env.WHISPER_CPP_MODEL_PATH ?? '',
   whisperCppThreads: Number(process.env.WHISPER_CPP_THREADS ?? 10),

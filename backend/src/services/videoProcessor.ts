@@ -81,6 +81,18 @@ interface ProcessingDependencies {
   ffmpegCommand: string;
 }
 
+interface YtDlpAttemptResult {
+  stdoutLines: string[]
+  stderrLines: string[]
+}
+
+interface YtDlpDownloadAttempt {
+  label: string
+  args: string[]
+}
+
+let ytDlpFreshnessCheckPromise: Promise<void> | null = null
+
 function isCancellationError(error: unknown): boolean {
   return error instanceof Error && (
     error.name === 'AbortError'
@@ -337,24 +349,69 @@ async function downloadAudio(
   }
 
   await log(`Descargando audio desde: ${job.url}`);
+  await ensureFreshYtDlp(dependencies.ytDlpCommand, log, signal)
 
-  await runCommand({
-    command: dependencies.ytDlpCommand,
-    args: ['-x', '--audio-format', 'mp3', '--no-playlist', '-o', outputTemplate, job.url],
-    signal,
-    onStdout: async (chunk) => {
-      const lines = chunk.split(/\r?\n/).filter(Boolean);
-      for (const line of lines) {
-        await log(`[yt-dlp] ${line}`);
-      }
+  const attempts: YtDlpDownloadAttempt[] = [
+    {
+      label: 'default',
+      args: ['-x', '--audio-format', 'mp3', '--no-playlist', '-f', 'bestaudio/best', '-o', outputTemplate, job.url],
     },
-    onStderr: async (chunk) => {
-      const lines = chunk.split(/\r?\n/).filter(Boolean);
-      for (const line of lines) {
-        await log(`[yt-dlp:stderr] ${line}`);
-      }
+    {
+      label: 'android-fallback',
+      args: [
+        '-x',
+        '--audio-format',
+        'mp3',
+        '--no-playlist',
+        '-f',
+        'bestaudio[ext=m4a]/bestaudio/best',
+        '--extractor-args',
+        'youtube:player_client=android',
+        '-o',
+        outputTemplate,
+        job.url,
+      ],
     },
-  });
+  ]
+
+  let lastError: Error | null = null
+  let lastAttemptResult: YtDlpAttemptResult | null = null
+
+  for (let index = 0; index < attempts.length; index += 1) {
+    const attempt = attempts[index]
+    if (index > 0) {
+      await log(`Reintentando descarga de YouTube con perfil ${attempt.label}.`)
+    }
+
+    try {
+      lastAttemptResult = await runYtDlpAttempt({
+        command: dependencies.ytDlpCommand,
+        args: attempt.args,
+        log,
+        signal,
+      })
+      lastError = null
+      break
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error))
+      lastAttemptResult = extractYtDlpAttemptResult(lastError)
+      const is403 = ytDlpLinesContain403(lastAttemptResult)
+      const detail = getLastYtDlpDetailLine(lastAttemptResult)
+      await log(
+        is403
+          ? `yt-dlp devolvió 403 Forbidden durante el intento ${attempt.label}.${detail ? ` Detalle: ${detail}` : ''}`
+          : `Falló la descarga con yt-dlp en el intento ${attempt.label}.${detail ? ` Detalle: ${detail}` : ''}`,
+      )
+
+      if (!is403 || index === attempts.length - 1) {
+        break
+      }
+    }
+  }
+
+  if (lastError) {
+    throw buildYtDlpDownloadError(lastError, lastAttemptResult)
+  }
 
   if (!(await pathExists(audioPath))) {
     const candidates = (await fs.readdir(job.outputDir))
@@ -373,6 +430,171 @@ async function downloadAudio(
   await hooks.refreshFiles();
   await log(`Audio disponible en ${audioPath}`);
   return audioPath;
+}
+
+async function runYtDlpAttempt({
+  command,
+  args,
+  log,
+  signal,
+}: {
+  command: string
+  args: string[]
+  log: (message: string) => Promise<void>
+  signal?: AbortSignal
+}): Promise<YtDlpAttemptResult> {
+  const stdoutLines: string[] = []
+  const stderrLines: string[] = []
+
+  try {
+    await runCommand({
+      command,
+      args,
+      signal,
+      onStdout: async (chunk) => {
+        const lines = chunk.split(/\r?\n/).filter(Boolean)
+        stdoutLines.push(...lines)
+        for (const line of lines) {
+          await log(`[yt-dlp] ${line}`)
+        }
+      },
+      onStderr: async (chunk) => {
+        const lines = chunk.split(/\r?\n/).filter(Boolean)
+        stderrLines.push(...lines)
+        for (const line of lines) {
+          await log(`[yt-dlp:stderr] ${line}`)
+        }
+      },
+    })
+  } catch (error) {
+    const wrapped = error instanceof Error ? error : new Error(String(error))
+    ;(wrapped as Error & { ytDlpResult?: YtDlpAttemptResult }).ytDlpResult = { stdoutLines, stderrLines }
+    throw wrapped
+  }
+
+  return { stdoutLines, stderrLines }
+}
+
+function extractYtDlpAttemptResult(error: Error): YtDlpAttemptResult | null {
+  const candidate = (error as Error & { ytDlpResult?: YtDlpAttemptResult }).ytDlpResult
+  return candidate ?? null
+}
+
+function ytDlpLinesContain403(result: YtDlpAttemptResult | null): boolean {
+  const lines = [...(result?.stderrLines ?? []), ...(result?.stdoutLines ?? [])]
+  return lines.some((line) => /403\b|Forbidden/i.test(line))
+}
+
+function getLastYtDlpDetailLine(result: YtDlpAttemptResult | null): string | null {
+  const lines = [...(result?.stderrLines ?? []), ...(result?.stdoutLines ?? [])]
+    .filter((line) => !/older than 90 days/i.test(line))
+  return lines.at(-1) ?? null
+}
+
+function buildYtDlpDownloadError(error: Error, result: YtDlpAttemptResult | null): Error {
+  const detail = getLastYtDlpDetailLine(result)
+  const staleVersion = [...(result?.stderrLines ?? []), ...(result?.stdoutLines ?? [])].some((line) => /older than 90 days/i.test(line))
+
+  if (ytDlpLinesContain403(result)) {
+    const reason = detail ? ` Detalle: ${detail}.` : ''
+    const staleHint = staleVersion
+      ? ' Además, tu versión de yt-dlp está desactualizada; actualizala y reintentá.'
+      : ' Probablemente YouTube bloqueó el stream elegido; reintentá más tarde o actualizá yt-dlp.'
+    return new Error(`yt-dlp no pudo descargar el audio de YouTube porque el stream respondió HTTP 403 Forbidden.${reason}${staleHint}`)
+  }
+
+  if (detail) {
+    return new Error(`yt-dlp falló al descargar el audio.${detail ? ` Detalle: ${detail}.` : ''}`)
+  }
+
+  return error
+}
+
+function parseYtDlpVersion(rawVersion: string): Date | null {
+  const match = rawVersion.trim().match(/^(\d{4})\.(\d{2})\.(\d{2})$/)
+  if (!match) {
+    return null
+  }
+
+  const [, year, month, day] = match
+  const parsed = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)))
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+async function ensureFreshYtDlp(
+  ytDlpCommand: string,
+  log: (message: string) => Promise<void>,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (ytDlpFreshnessCheckPromise) {
+    return ytDlpFreshnessCheckPromise
+  }
+
+  ytDlpFreshnessCheckPromise = (async () => {
+    let versionOutput = ''
+
+    try {
+      await runCommand({
+        command: ytDlpCommand,
+        args: ['--version'],
+        signal,
+        onStdout: async (chunk) => {
+          versionOutput += chunk
+        },
+      })
+    } catch (error) {
+      await log(`No se pudo consultar la versión de yt-dlp antes de descargar.${error instanceof Error ? ` ${error.message}` : ''}`)
+      return
+    }
+
+    const rawVersion = versionOutput.trim().split(/\r?\n/).at(-1)?.trim() ?? ''
+    const releaseDate = parseYtDlpVersion(rawVersion)
+    if (!releaseDate) {
+      await log(`No se pudo interpretar la versión de yt-dlp (${rawVersion || 'sin dato'}).`)
+      return
+    }
+
+    const ageDays = Math.floor((Date.now() - releaseDate.getTime()) / (1000 * 60 * 60 * 24))
+    if (ageDays <= appConfig.ytDlpMaxAgeDays) {
+      return
+    }
+
+    await log(`yt-dlp está desactualizado (${rawVersion}, ${ageDays} días).`)
+    if (!appConfig.ytDlpAutoUpdate) {
+      await log('La actualización automática de yt-dlp está desactivada. Continuamos con la versión actual.')
+      return
+    }
+
+    try {
+      await log('Intentando actualizar yt-dlp automáticamente antes de descargar.')
+      await runCommand({
+        command: ytDlpCommand,
+        args: ['-U'],
+        signal,
+        onStdout: async (chunk) => {
+          const lines = chunk.split(/\r?\n/).filter(Boolean)
+          for (const line of lines) {
+            await log(`[yt-dlp:update] ${line}`)
+          }
+        },
+        onStderr: async (chunk) => {
+          const lines = chunk.split(/\r?\n/).filter(Boolean)
+          for (const line of lines) {
+            await log(`[yt-dlp:update:stderr] ${line}`)
+          }
+        },
+      })
+      await log('Actualización automática de yt-dlp finalizada.')
+    } catch (error) {
+      await log(
+        `No se pudo actualizar yt-dlp automáticamente.${error instanceof Error ? ` ${error.message}` : ''} Si sigue fallando YouTube, actualizalo manualmente.`,
+      )
+    }
+  })().finally(() => {
+    ytDlpFreshnessCheckPromise = null
+  })
+
+  return ytDlpFreshnessCheckPromise
 }
 
 async function denoiseAudio(

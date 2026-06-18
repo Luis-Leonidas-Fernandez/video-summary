@@ -171,7 +171,7 @@ export async function getSystemDiagnostics(): Promise<SystemDiagnosticsResponse>
       label: 'yt-dlp',
       expected: 'Comando `yt-dlp` instalable por PATH',
       resolution: ytDlpResolution,
-      resolutionHint: 'Instalá yt-dlp para resolver URLs y bajar audio de YouTube.',
+      resolutionHint: 'Instalá o actualizá yt-dlp para resolver URLs y bajar audio de YouTube. Si aparece un 403 de YouTube, primero probá actualizar yt-dlp.',
     }),
     whisperBinaryStatus,
     groundingPythonStatus,
